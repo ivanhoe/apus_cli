@@ -1,0 +1,15 @@
+# Build output
+apus
+dist/
+
+# Go
+*.test
+*.out
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp

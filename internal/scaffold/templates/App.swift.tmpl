@@ -1,0 +1,20 @@
+import SwiftUI
+
+#if DEBUG
+import Apus
+#endif
+
+@main
+struct {{ .AppName }}App: App {
+    init() {
+        #if DEBUG
+        Apus.shared.start(interceptNetwork: true)
+        #endif
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}

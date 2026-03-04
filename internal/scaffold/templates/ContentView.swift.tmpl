@@ -1,0 +1,24 @@
+import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "magnifyingglass.circle.fill")
+                .font(.system(size: 64))
+                .foregroundStyle(.tint)
+
+            Text("{{ .AppName }}")
+                .font(.largeTitle.bold())
+
+            Text("Apus MCP server is running.\nConnect your AI agent at\nlocalhost:9847")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+    }
+}
+
+#Preview {
+    ContentView()
+}

@@ -1,0 +1,29 @@
+name: {{ .AppName }}
+options:
+  bundleIdPrefix: com.{{ .BundleOrg }}
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  Apus:
+    url: https://github.com/ivanhoe/apus
+    from: 0.3.0
+
+targets:
+  {{ .AppName }}:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: Apus
+        product: Apus
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.{{ .BundleOrg }}.{{ .AppNameLower }}
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        OTHER_LDFLAGS: "$(inherited) -Xlinker -interposable"

@@ -1,0 +1,38 @@
+# AGENTS.md — {{ .AppName }}
+
+## MCP Server
+
+Apus runs at `http://localhost:9847/mcp` when the app is running in the simulator or on a device.
+
+## Build & Run
+
+```bash
+# Build
+xcodebuild -scheme {{ .AppName }} \
+  -destination "id={{ .SimulatorUDID }}" \
+  -quiet CODE_SIGN_IDENTITY="-"
+
+# Launch
+xcrun simctl launch {{ .SimulatorUDID }} com.{{ .BundleOrg }}.{{ .AppNameLower }}
+```
+
+## Key MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_logs` | App console output |
+| `get_screenshot` | Current screen as JPEG |
+| `get_view_hierarchy` | Full SwiftUI/UIKit view tree |
+| `ui_interact` | tap, double_tap, swipe, type_text |
+| `get_network_history` | All HTTP/HTTPS traffic |
+| `hot_reload` | Inject Swift changes without recompile |
+| `get_memory_usage` | Live memory stats |
+
+## Quick Start
+
+```
+POST http://localhost:9847/mcp
+Content-Type: application/json
+
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_screenshot","arguments":{}}}
+```

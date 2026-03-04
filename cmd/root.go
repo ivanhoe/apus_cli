@@ -1,0 +1,35 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+const version = "0.1.0"
+
+var rootCmd = &cobra.Command{
+	Use:   "apus",
+	Short: "Apus CLI — embed the MCP debug server in your iOS app",
+	Long: `Apus CLI makes it trivial to get an AI-inspectable iOS app running.
+
+  apus new MyApp   — create a new project with Apus pre-integrated
+  apus init        — add Apus to an existing Xcode project`,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+}
+
+func init() {
+	rootCmd.Version = version
+	rootCmd.AddCommand(newCmd)
+	rootCmd.AddCommand(initCmd)
+}
+
+// Execute is the entry point called from main.
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}

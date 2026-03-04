@@ -7,9 +7,9 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/ivanhoe/apus-cli/internal/builder"
-	"github.com/ivanhoe/apus-cli/internal/terminal"
-	"github.com/ivanhoe/apus-cli/internal/xcode"
+	"github.com/ivanhoe/apus_cli/internal/builder"
+	"github.com/ivanhoe/apus_cli/internal/terminal"
+	"github.com/ivanhoe/apus_cli/internal/xcode"
 	"github.com/spf13/cobra"
 )
 
@@ -62,10 +62,24 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	// ── Step 3: Inject Apus.shared.start() ──
 	{
-		done := p.Start("Injecting Apus.shared.start() in " + filepath.Base(info.EntryFile))
+		entryLabel := "app entry point"
+		if info.EntryFile != "" {
+			entryLabel = filepath.Base(info.EntryFile)
+		}
+		done := p.Start("Injecting Apus.shared.start() in " + entryLabel)
 		if info.EntryFile == "" {
-			done(fmt.Errorf("no entry file detected"))
-			terminal.Info("Add `Apus.shared.start()` manually in your App init()")
+			integrated, checkErr := xcode.HasApusIntegration(cwd)
+			if checkErr != nil {
+				done(fmt.Errorf("no entry file detected"))
+				terminal.Info("Add `Apus.shared.start()` manually in your App init()")
+				terminal.Info("Entry-point verification failed: " + checkErr.Error())
+			} else if integrated {
+				done(nil)
+				terminal.Info("Apus integration already present; skipping injection")
+			} else {
+				done(fmt.Errorf("no entry file detected"))
+				terminal.Info("Add `Apus.shared.start()` manually in your App init()")
+			}
 		} else {
 			err = xcode.InjectApus(info.EntryFile)
 			done(err)

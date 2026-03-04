@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="ivanhoe/apus-cli"
+REPO="ivanhoe/apus_cli"
 BIN_NAME="apus"
 INSTALL_DIR="${APUS_INSTALL_DIR:-/usr/local/bin}"
 

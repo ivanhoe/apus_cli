@@ -3,6 +3,7 @@ package xcode
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -10,6 +11,53 @@ const (
 	apusImportBlock = "#if DEBUG\nimport Apus\n#endif\n"
 	apusStartLine   = "\n        #if DEBUG\n        Apus.shared.start(interceptNetwork: true)\n        #endif"
 )
+
+// HasApusIntegration returns true when the project already contains both
+// `import Apus` and `Apus.shared.start(...)` anywhere in Swift sources.
+func HasApusIntegration(dir string) (bool, error) {
+	hasImport := false
+	hasStart := false
+
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+
+		base := filepath.Base(p)
+		if info.IsDir() {
+			if base == ".build" || base == "DerivedData" || strings.HasPrefix(base, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".swift") {
+			return nil
+		}
+
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		src := string(raw)
+		if strings.Contains(src, "import Apus") {
+			hasImport = true
+		}
+		if strings.Contains(src, "Apus.shared.start(") {
+			hasStart = true
+		}
+		if hasImport && hasStart {
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err == filepath.SkipAll {
+		err = nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return hasImport && hasStart, nil
+}
 
 // InjectApus modifies the Swift @main file to import and start Apus.
 // It is idempotent — calling it twice produces the same result.
@@ -114,7 +162,7 @@ func insertAfterInitBrace(src string, initIdx int) (string, error) {
 
 // findStructBodyBrace finds the opening brace of a @main struct/class.
 func findStructBodyBrace(src string) int {
-	mainIdx := strings.Index(src, "@main")
+	mainIdx := findMainAttributeIndex(src)
 	if mainIdx == -1 {
 		return -1
 	}
@@ -144,4 +192,19 @@ func findStructBodyBrace(src string) int {
 		return -1
 	}
 	return mainIdx + declIdx + braceIdx + 1
+}
+
+func findMainAttributeIndex(src string) int {
+	mainIdx := strings.Index(src, "@main")
+	uiAppMainIdx := strings.Index(src, "@UIApplicationMain")
+	switch {
+	case mainIdx == -1:
+		return uiAppMainIdx
+	case uiAppMainIdx == -1:
+		return mainIdx
+	case mainIdx < uiAppMainIdx:
+		return mainIdx
+	default:
+		return uiAppMainIdx
+	}
 }

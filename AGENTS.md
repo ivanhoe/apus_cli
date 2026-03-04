@@ -1,4 +1,4 @@
-# AGENTS.md — apus-cli
+# AGENTS.md — apus_cli
 
 ## What is this repo
 
@@ -56,14 +56,14 @@ go vet ./...             # static analysis
 ## pbxproj surgery details (`internal/xcode/pbxproj.go`)
 
 Inserts 5 objects when running `apus init`:
-1. `XCRemoteSwiftPackageReference` — repo URL + upToNextMajorVersion 0.3.0
+1. `XCRemoteSwiftPackageReference` — repo URL + branch requirement (`main`)
 2. `XCSwiftPackageProductDependency` — links product to the reference
 3. `PBXBuildFile` — entry in the frameworks build phase
 4. `packageReferences` in `PBXProject` — creates key if missing
 5. Target's `packageProductDependencies` + `PBXFrameworksBuildPhase` files list
 
 UUID format: 24-char uppercase hex (`crypto/rand`).
-Idempotency check: bails early if `https://github.com/ivanhoe/apus` already appears in the file.
+Idempotency check: if `https://github.com/ivanhoe/apus` already appears, it no-op; if it detects legacy `minimumVersion = 0.3.0`, it migrates to `branch = main`.
 
 ## Swift injection details (`internal/xcode/inject.go`)
 
@@ -81,7 +81,7 @@ brew tap ivanhoe/apus
 brew install apus
 
 # curl installer
-curl -fsSL https://raw.githubusercontent.com/ivanhoe/apus-cli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ivanhoe/apus_cli/main/scripts/install.sh | bash
 
 # Release: tag triggers GitHub Actions matrix build
 git tag v0.x.0 && git push --tags

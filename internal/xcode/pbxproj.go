@@ -10,9 +10,10 @@ import (
 )
 
 const (
-	apusRepoURL    = "https://github.com/ivanhoe/apus"
-	apusMinVersion = "0.3.0"
-	apusProduct    = "Apus"
+	apusRepoURL          = "https://github.com/ivanhoe/apus"
+	apusBranch           = "main"
+	apusProduct          = "Apus"
+	apusLegacyMinVersion = "0.3.0"
 )
 
 // AddApusDependency inserts Apus as a Swift Package dependency in the .pbxproj file.
@@ -31,14 +32,23 @@ func AddApusDependency(projPath string, target string) error {
 
 	// Idempotency: already has Apus
 	if strings.Contains(src, apusRepoURL) {
-		return nil
+		updated := migrateLegacyApusRequirement(src)
+		normalized, err := normalizeLocalApusReference(updated)
+		if err != nil {
+			return fmt.Errorf("normalize local Apus package reference: %w", err)
+		}
+		updated = normalized
+		if updated == src {
+			return nil
+		}
+		return os.WriteFile(pbxPath, []byte(updated), 0o644)
 	}
 
 	// Generate UUIDs for the 4 new objects
-	refUUID := newUUID()    // XCRemoteSwiftPackageReference
-	depUUID := newUUID()    // XCSwiftPackageProductDependency
-	buildUUID := newUUID()  // PBXBuildFile (framework phase entry)
-	_ = buildUUID           // used below
+	refUUID := newUUID()   // XCRemoteSwiftPackageReference
+	depUUID := newUUID()   // XCSwiftPackageProductDependency
+	buildUUID := newUUID() // PBXBuildFile (framework phase entry)
+	_ = buildUUID          // used below
 
 	// ── 1. Insert XCRemoteSwiftPackageReference section entry ──
 	src, err = insertRemotePackageRef(src, refUUID)
@@ -70,7 +80,91 @@ func AddApusDependency(projPath string, target string) error {
 		return fmt.Errorf("add to target %s: %w", target, err)
 	}
 
+	src, err = normalizeLocalApusReference(src)
+	if err != nil {
+		return fmt.Errorf("normalize local Apus package reference: %w", err)
+	}
+
 	return os.WriteFile(pbxPath, []byte(src), 0o644)
+}
+
+func migrateLegacyApusRequirement(src string) string {
+	re := regexp.MustCompile(`(?s)(repositoryURL = "` + regexp.QuoteMeta(apusRepoURL) + `";\s*requirement = \{\s*)kind = upToNextMajorVersion;\s*minimumVersion = [^;]+;(\s*\};)`)
+	return re.ReplaceAllString(src, fmt.Sprintf("${1}kind = branch;\n\t\t\t\tbranch = %s;${2}", apusBranch))
+}
+
+func normalizeLocalApusReference(src string) (string, error) {
+	localRefs := findLocalApusRefUUIDs(src)
+	if len(localRefs) == 0 {
+		return src, nil
+	}
+
+	remoteUUID, err := findApusRemoteRefUUID(src)
+	if err != nil {
+		return "", err
+	}
+
+	for _, localUUID := range localRefs {
+		src = replaceLocalApusPackageLine(src, localUUID, remoteUUID)
+		src = removeLocalApusPackageReferenceLine(src, localUUID)
+		src = removeLocalApusReferenceObject(src, localUUID)
+	}
+
+	return src, nil
+}
+
+func findLocalApusRefUUIDs(src string) []string {
+	// Match local package reference objects and keep those that clearly point to Apus.
+	// Example block:
+	// AAAAAA /* XCLocalSwiftPackageReference "../apus" */ = {
+	//     isa = XCLocalSwiftPackageReference;
+	//     relativePath = ../apus;
+	// };
+	re := regexp.MustCompile(`(?s)([0-9A-F]{24}) /\* XCLocalSwiftPackageReference "([^"]*)" \*/ = \{\s*isa = XCLocalSwiftPackageReference;\s*(.*?)\s*\};`)
+	matches := re.FindAllStringSubmatch(src, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	seen := map[string]struct{}{}
+	var uuids []string
+	for _, m := range matches {
+		uuid := m[1]
+		commentPath := strings.ToLower(m[2])
+		body := strings.ToLower(m[3])
+		if strings.Contains(commentPath, "apus") || strings.Contains(body, "relativepath = ../apus") || strings.Contains(body, "/apus") {
+			if _, ok := seen[uuid]; ok {
+				continue
+			}
+			seen[uuid] = struct{}{}
+			uuids = append(uuids, uuid)
+		}
+	}
+	return uuids
+}
+
+func findApusRemoteRefUUID(src string) (string, error) {
+	re := regexp.MustCompile(`(?s)([0-9A-F]{24}) /\* XCRemoteSwiftPackageReference "[^"]*" \*/ = \{\s*isa = XCRemoteSwiftPackageReference;\s*repositoryURL = "` + regexp.QuoteMeta(apusRepoURL) + `";`)
+	m := re.FindStringSubmatch(src)
+	if len(m) < 2 {
+		return "", fmt.Errorf("Apus remote package reference not found")
+	}
+	return m[1], nil
+}
+
+func replaceLocalApusPackageLine(src, localUUID, remoteUUID string) string {
+	re := regexp.MustCompile(`package = ` + localUUID + ` /\* XCLocalSwiftPackageReference "[^"]*" \*/;`)
+	return re.ReplaceAllString(src, fmt.Sprintf(`package = %s /* XCRemoteSwiftPackageReference "%s" */;`, remoteUUID, apusProduct))
+}
+
+func removeLocalApusPackageReferenceLine(src, localUUID string) string {
+	re := regexp.MustCompile(`\n\s*` + localUUID + ` /\* XCLocalSwiftPackageReference "[^"]*" \*/,\s*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func removeLocalApusReferenceObject(src, localUUID string) string {
+	re := regexp.MustCompile(`(?s)\n?\s*` + localUUID + ` /\* XCLocalSwiftPackageReference "[^"]*" \*/ = \{\s*isa = XCLocalSwiftPackageReference;\s*relativePath = [^;]+;\s*\};\n?`)
+	return re.ReplaceAllString(src, "\n")
 }
 
 // pbxprojPath returns the path to project.pbxproj inside the .xcodeproj bundle.
@@ -112,10 +206,10 @@ func insertRemotePackageRef(src, refUUID string) (string, error) {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "%s";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = %s;
+				kind = branch;
+				branch = %s;
 			};
-		};`, refUUID, apusProduct, apusRepoURL, apusMinVersion)
+		};`, refUUID, apusProduct, apusRepoURL, apusBranch)
 
 	return insertBeforeSectionEnd(src, "/* End XCRemoteSwiftPackageReference section */", entry)
 }

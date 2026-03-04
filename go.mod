@@ -1,4 +1,4 @@
-module github.com/ivanhoe/apus-cli
+module github.com/ivanhoe/apus_cli
 
 go 1.22
 

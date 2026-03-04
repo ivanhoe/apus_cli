@@ -5,10 +5,10 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/ivanhoe/apus-cli/internal/builder"
-	"github.com/ivanhoe/apus-cli/internal/scaffold"
-	"github.com/ivanhoe/apus-cli/internal/simulator"
-	"github.com/ivanhoe/apus-cli/internal/terminal"
+	"github.com/ivanhoe/apus_cli/internal/builder"
+	"github.com/ivanhoe/apus_cli/internal/scaffold"
+	"github.com/ivanhoe/apus_cli/internal/simulator"
+	"github.com/ivanhoe/apus_cli/internal/terminal"
 	"github.com/spf13/cobra"
 )
 

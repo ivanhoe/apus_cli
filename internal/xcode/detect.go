@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -22,7 +23,7 @@ type ProjectInfo struct {
 }
 
 // DetectProject walks the current directory (depth 1) to find an Xcode project,
-// then resolves targets and locates the SwiftUI entry point.
+// then resolves targets and locates the app entry point for the selected target.
 func DetectProject(dir string) (*ProjectInfo, error) {
 	projPath, err := findXcodeProj(dir)
 	if err != nil {
@@ -42,8 +43,8 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 		Target:      target,
 	}
 
-	// Find Swift entry point (file with @main)
-	entryFile, isSwiftUI, err := findEntryPoint(dir)
+	// Find the entry-point file for the selected target
+	entryFile, isSwiftUI, err := findEntryPoint(dir, target)
 	if err != nil {
 		// Non-fatal: inject may still work heuristically
 		_ = err
@@ -210,18 +211,31 @@ func listTargetsFromPBXProj(projPath string) ([]string, error) {
 	return targets, nil
 }
 
-// findEntryPoint walks swift files looking for @main + App protocol.
-func findEntryPoint(dir string) (path string, isSwiftUI bool, err error) {
+type entryPointCandidate struct {
+	path      string
+	isSwiftUI bool
+	score     int
+}
+
+// findEntryPoint walks swift files looking for @main-like entry points and picks
+// the candidate that best matches the selected target.
+func findEntryPoint(dir, target string) (path string, isSwiftUI bool, err error) {
+	candidates := make([]entryPointCandidate, 0, 4)
+
 	err = filepath.Walk(dir, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil // skip unreadable dirs
 		}
-		// Skip build artifacts and hidden dirs
+
 		base := filepath.Base(p)
-		if base == ".build" || base == "DerivedData" || strings.HasPrefix(base, ".") {
-			return filepath.SkipDir
+		if info.IsDir() {
+			if base == ".build" || base == "DerivedData" || strings.HasPrefix(base, ".") {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		if info.IsDir() || !strings.HasSuffix(p, ".swift") {
+
+		if !strings.HasSuffix(p, ".swift") {
 			return nil
 		}
 
@@ -230,22 +244,72 @@ func findEntryPoint(dir string) (path string, isSwiftUI bool, err error) {
 			return nil
 		}
 		s := string(content)
-		if hasMainAttribute(s) {
-			if strings.Contains(s, ": App") || strings.Contains(s, ":App") {
-				isSwiftUI = true
-			}
-			path = p
-			return filepath.SkipAll
+		if !hasMainAttribute(s) {
+			return nil
 		}
+
+		swiftUI := strings.Contains(s, ": App") || strings.Contains(s, ":App")
+		candidates = append(candidates, entryPointCandidate{
+			path:      p,
+			isSwiftUI: swiftUI,
+			score:     entryPointScore(p, s, target),
+		})
 		return nil
 	})
-	if err == filepath.SkipAll {
-		err = nil
+	if err != nil {
+		return "", false, err
 	}
-	if path == "" && err == nil {
-		err = fmt.Errorf("no @main Swift file found in %s", dir)
+
+	if len(candidates) == 0 {
+		return "", false, fmt.Errorf("no @main Swift file found in %s", dir)
 	}
-	return
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			if candidates[i].isSwiftUI != candidates[j].isSwiftUI {
+				return candidates[i].isSwiftUI
+			}
+			return len(candidates[i].path) < len(candidates[j].path)
+		}
+		return candidates[i].score > candidates[j].score
+	})
+
+	best := candidates[0]
+	return best.path, best.isSwiftUI, nil
+}
+
+func entryPointScore(path, src, target string) int {
+	score := 0
+	pathLower := strings.ToLower(filepath.ToSlash(path))
+	targetLower := strings.ToLower(target)
+	baseLower := strings.ToLower(filepath.Base(path))
+
+	if targetLower != "" {
+		if strings.Contains(pathLower, targetLower) {
+			score += 80
+		}
+		if baseLower == targetLower+".swift" || baseLower == targetLower+"app.swift" {
+			score += 120
+		}
+		if strings.Contains(src, "struct "+target) || strings.Contains(src, "class "+target) {
+			score += 60
+		}
+	}
+
+	if strings.Contains(src, ": App") || strings.Contains(src, ":App") {
+		score += 20
+	}
+	if strings.Contains(pathLower, "/app/main/") || strings.Contains(pathLower, "/app/") {
+		score += 15
+	}
+	if strings.Contains(pathLower, "widget") && !strings.Contains(targetLower, "widget") {
+		score -= 70
+	}
+	if strings.Contains(pathLower, "extension") && !strings.Contains(targetLower, "extension") {
+		score -= 40
+	}
+
+	return score
 }
 
 func hasMainAttribute(src string) bool {

@@ -30,14 +30,18 @@ func AddApusDependency(projPath string, target string) error {
 	}
 	src := string(raw)
 
-	// Idempotency: already has Apus
+	// Idempotency: already has Apus remote reference. Migrate legacy requirement,
+	// normalize old local references, and ensure target wiring is complete.
 	if strings.Contains(src, apusRepoURL) {
 		updated := migrateLegacyApusRequirement(src)
 		normalized, err := normalizeLocalApusReference(updated)
 		if err != nil {
 			return fmt.Errorf("normalize local Apus package reference: %w", err)
 		}
-		updated = normalized
+		updated, err = ensureApusDependencyWiring(normalized, target)
+		if err != nil {
+			return fmt.Errorf("ensure Apus dependency wiring: %w", err)
+		}
 		if updated == src {
 			return nil
 		}
@@ -85,12 +89,54 @@ func AddApusDependency(projPath string, target string) error {
 		return fmt.Errorf("normalize local Apus package reference: %w", err)
 	}
 
+	src, err = ensureApusDependencyWiring(src, target)
+	if err != nil {
+		return fmt.Errorf("ensure Apus dependency wiring: %w", err)
+	}
+
 	return os.WriteFile(pbxPath, []byte(src), 0o644)
 }
 
 func migrateLegacyApusRequirement(src string) string {
 	re := regexp.MustCompile(`(?s)(repositoryURL = "` + regexp.QuoteMeta(apusRepoURL) + `";\s*requirement = \{\s*)kind = upToNextMajorVersion;\s*minimumVersion = [^;]+;(\s*\};)`)
 	return re.ReplaceAllString(src, fmt.Sprintf("${1}kind = branch;\n\t\t\t\tbranch = %s;${2}", apusBranch))
+}
+
+func ensureApusDependencyWiring(src, target string) (string, error) {
+	remoteUUID, err := findApusRemoteRefUUID(src)
+	if err != nil {
+		return "", err
+	}
+
+	depUUID := findApusProductDependencyUUID(src, remoteUUID)
+	if depUUID == "" {
+		depUUID = newUUID()
+		src, err = insertProductDependency(src, depUUID, remoteUUID)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	buildUUID := findApusBuildFileUUID(src, depUUID)
+	if buildUUID == "" {
+		buildUUID = newUUID()
+		src, err = insertBuildFile(src, buildUUID, depUUID)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	src, err = addToPackageReferences(src, remoteUUID)
+	if err != nil {
+		return "", err
+	}
+
+	src, err = addToTarget(src, target, depUUID, buildUUID)
+	if err != nil {
+		return "", err
+	}
+
+	return src, nil
 }
 
 func normalizeLocalApusReference(src string) (string, error) {
@@ -115,11 +161,6 @@ func normalizeLocalApusReference(src string) (string, error) {
 
 func findLocalApusRefUUIDs(src string) []string {
 	// Match local package reference objects and keep those that clearly point to Apus.
-	// Example block:
-	// AAAAAA /* XCLocalSwiftPackageReference "../apus" */ = {
-	//     isa = XCLocalSwiftPackageReference;
-	//     relativePath = ../apus;
-	// };
 	re := regexp.MustCompile(`(?s)([0-9A-F]{24}) /\* XCLocalSwiftPackageReference "([^"]*)" \*/ = \{\s*isa = XCLocalSwiftPackageReference;\s*(.*?)\s*\};`)
 	matches := re.FindAllStringSubmatch(src, -1)
 	if len(matches) == 0 {
@@ -150,6 +191,36 @@ func findApusRemoteRefUUID(src string) (string, error) {
 		return "", fmt.Errorf("Apus remote package reference not found")
 	}
 	return m[1], nil
+}
+
+func findApusProductDependencyUUID(src, remoteUUID string) string {
+	re := regexp.MustCompile(`(?s)([0-9A-F]{24}) /\* ` + regexp.QuoteMeta(apusProduct) + ` \*/ = \{\s*isa = XCSwiftPackageProductDependency;(.*?)\};`)
+	matches := re.FindAllStringSubmatch(src, -1)
+	if len(matches) == 0 {
+		return ""
+	}
+
+	fallback := ""
+	for _, m := range matches {
+		uuid := m[1]
+		body := m[2]
+		if fallback == "" {
+			fallback = uuid
+		}
+		if strings.Contains(body, "package = "+remoteUUID+" ") {
+			return uuid
+		}
+	}
+	return fallback
+}
+
+func findApusBuildFileUUID(src, depUUID string) string {
+	re := regexp.MustCompile(`(?s)([0-9A-F]{24}) /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/ = \{\s*isa = PBXBuildFile;\s*productRef = ` + depUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` \*/;\s*\};`)
+	m := re.FindStringSubmatch(src)
+	if len(m) < 2 {
+		return ""
+	}
+	return m[1]
 }
 
 func replaceLocalApusPackageLine(src, localUUID, remoteUUID string) string {
@@ -239,18 +310,29 @@ func insertBuildFile(src, buildUUID, depUUID string) (string, error) {
 	return insertBeforeSectionEnd(src, "/* End PBXBuildFile section */", entry)
 }
 
+func packageReferencesContain(src, refUUID string) bool {
+	re := regexp.MustCompile(`(?s)packageReferences\s*=\s*\(([^)]*)\)`)
+	match := re.FindStringSubmatch(src)
+	if match == nil {
+		return false
+	}
+	return strings.Contains(match[1], refUUID+" /*")
+}
+
 func addToPackageReferences(src, refUUID string) (string, error) {
+	if packageReferencesContain(src, refUUID) {
+		return src, nil
+	}
+
 	// Find packageReferences = ( ... ); in PBXProject
 	re := regexp.MustCompile(`(packageReferences\s*=\s*\()`)
 	if !re.MatchString(src) {
 		// No packageReferences key yet — insert it before the closing of PBXProject object
-		// Find `/* End PBXProject section */` and work backwards
 		target := "/* End PBXProject section */"
 		idx := strings.Index(src, target)
 		if idx == -1 {
 			return "", fmt.Errorf("cannot find PBXProject section to add packageReferences")
 		}
-		// Find the last `};` before the section end
 		beforeSection := src[:idx]
 		lastBrace := strings.LastIndex(beforeSection, "};")
 		if lastBrace == -1 {
@@ -269,33 +351,32 @@ func addToPackageReferences(src, refUUID string) (string, error) {
 
 func addToTarget(src, targetName, depUUID, buildUUID string) (string, error) {
 	// ── packageProductDependencies ──
-	// Find the target's object by looking for `name = <targetName>;` inside a PBXNativeTarget block
 	targetObjStart, targetObjEnd, err := findTargetObject(src, targetName)
 	if err != nil {
 		return "", err
 	}
 	targetObj := src[targetObjStart:targetObjEnd]
 
-	// Add to packageProductDependencies
-	depEntry := fmt.Sprintf("\n\t\t\t\t%s /* %s */,", depUUID, apusProduct)
-	reDeps := regexp.MustCompile(`(packageProductDependencies\s*=\s*\()`)
-	if reDeps.MatchString(targetObj) {
-		loc := reDeps.FindStringIndex(targetObj)
-		targetObj = targetObj[:loc[1]] + depEntry + targetObj[loc[1]:]
-	} else {
-		// Insert packageProductDependencies before closing `};`
-		lastBrace := strings.LastIndex(targetObj, "};")
-		if lastBrace == -1 {
-			return "", fmt.Errorf("cannot find target object closing brace for target %s", targetName)
+	depToken := depUUID + " /* " + apusProduct + " */"
+	if !strings.Contains(targetObj, depToken) {
+		depEntry := fmt.Sprintf("\n\t\t\t\t%s /* %s */,", depUUID, apusProduct)
+		reDeps := regexp.MustCompile(`(packageProductDependencies\s*=\s*\()`)
+		if reDeps.MatchString(targetObj) {
+			loc := reDeps.FindStringIndex(targetObj)
+			targetObj = targetObj[:loc[1]] + depEntry + targetObj[loc[1]:]
+		} else {
+			// Insert packageProductDependencies before closing `};`
+			lastBrace := strings.LastIndex(targetObj, "};")
+			if lastBrace == -1 {
+				return "", fmt.Errorf("cannot find target object closing brace for target %s", targetName)
+			}
+			injection := fmt.Sprintf("\t\t\tpackageProductDependencies = (%s\n\t\t\t);\n\t\t", depEntry)
+			targetObj = targetObj[:lastBrace] + injection + targetObj[lastBrace:]
 		}
-		injection := fmt.Sprintf("\t\t\tpackageProductDependencies = (%s\n\t\t\t);\n\t\t", depEntry)
-		targetObj = targetObj[:lastBrace] + injection + targetObj[lastBrace:]
+		src = src[:targetObjStart] + targetObj + src[targetObjEnd:]
 	}
 
-	src = src[:targetObjStart] + targetObj + src[targetObjEnd:]
-
 	// ── PBXFrameworksBuildPhase ──
-	// Find the frameworks build phase UUID referenced by this target, then inject the build file
 	src, err = addToBuildPhase(src, targetName, buildUUID)
 	if err != nil {
 		return "", err
@@ -315,19 +396,17 @@ func insertBeforeSectionEnd(src, sectionEnd, entry string) (string, error) {
 
 // findTargetObject returns the byte range [start, end) of the PBXNativeTarget object for targetName.
 func findTargetObject(src, targetName string) (int, int, error) {
-	// Pattern: `<UUID> /* <targetName> */ = {\n\t\t\tisa = PBXNativeTarget;`
-	pattern := fmt.Sprintf("/* %s */ = {\n\t\t\tisa = PBXNativeTarget", targetName)
-	idx := strings.Index(src, pattern)
-	if idx == -1 {
+	targetPattern := regexp.MustCompile(`(?s)/\* ` + regexp.QuoteMeta(targetName) + ` \*/ = \{\s*isa = PBXNativeTarget`)
+	loc := targetPattern.FindStringIndex(src)
+	if loc == nil {
 		return 0, 0, fmt.Errorf("PBXNativeTarget for %q not found in pbxproj", targetName)
 	}
-	// Walk back to find UUID start
+	idx := loc[0]
 	start := idx
 	for start > 0 && src[start-1] != '\n' {
 		start--
 	}
 
-	// Find the closing `};` of this object by counting braces from `= {`
 	braceStart := strings.Index(src[idx:], "{")
 	if braceStart == -1 {
 		return 0, 0, fmt.Errorf("no opening brace for PBXNativeTarget %s", targetName)
@@ -342,7 +421,6 @@ func findTargetObject(src, targetName string) (int, int, error) {
 		case '}':
 			depth--
 			if depth == 0 {
-				// consume the trailing `;`
 				if end+1 < len(src) && src[end+1] == ';' {
 					end += 2
 				}
@@ -363,7 +441,6 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 	}
 	targetObj := src[targetObjStart:targetObjEnd]
 
-	// Extract the frameworks phase UUID (first UUID in buildPhases that maps to PBXFrameworksBuildPhase)
 	reBuildPhases := regexp.MustCompile(`buildPhases\s*=\s*\(([^)]*)\)`)
 	match := reBuildPhases.FindStringSubmatch(targetObj)
 	if match == nil {
@@ -373,29 +450,32 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 	reUUID := regexp.MustCompile(`([0-9A-F]{24})\s*/\* Frameworks \*/`)
 	uuidMatch := reUUID.FindStringSubmatch(match[1])
 	if uuidMatch == nil {
-		// No Frameworks phase found in the target's phase list — that's unusual; skip
 		return src, nil
 	}
 	frameworksPhaseUUID := uuidMatch[1]
 
-	// Find that phase object in the PBXFrameworksBuildPhase section
-	phasePattern := fmt.Sprintf("%s /* Frameworks */ = {\n\t\t\tisa = PBXFrameworksBuildPhase", frameworksPhaseUUID)
-	phaseIdx := strings.Index(src, phasePattern)
-	if phaseIdx == -1 {
-		return src, nil // phase not found — skip gracefully
+	phasePattern := regexp.MustCompile(`(?s)` + frameworksPhaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase`)
+	phaseLoc := phasePattern.FindStringIndex(src)
+	if phaseLoc == nil {
+		return src, nil
 	}
+	phaseIdx := phaseLoc[0]
 
-	// Find the `files = (` list in this phase
 	phaseEnd := strings.Index(src[phaseIdx:], "};")
 	if phaseEnd == -1 {
 		return src, nil
 	}
 	phaseSection := src[phaseIdx : phaseIdx+phaseEnd+2]
 
+	buildToken := buildUUID + " /* " + apusProduct + " in Frameworks */"
+	if strings.Contains(phaseSection, buildToken) {
+		return src, nil
+	}
+
 	entry := fmt.Sprintf("\n\t\t\t\t%s /* %s in Frameworks */,", buildUUID, apusProduct)
 	reFiles := regexp.MustCompile(`(files\s*=\s*\()`)
 	if !reFiles.MatchString(phaseSection) {
-		return src, nil // no files list — skip
+		return src, nil
 	}
 	newPhaseSection := reFiles.ReplaceAllStringFunc(phaseSection, func(s string) string {
 		return s + entry

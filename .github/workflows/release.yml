@@ -35,7 +35,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          go build -ldflags="-s -w -X github.com/ivanhoe/apus-cli/cmd.version=${GITHUB_REF_NAME}" \
+          go build -ldflags="-s -w -X github.com/ivanhoe/apus_cli/cmd.version=${GITHUB_REF_NAME}" \
             -o apus .
 
       - name: Create tarball

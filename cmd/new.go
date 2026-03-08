@@ -3,9 +3,10 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"regexp"
+	"time"
 
 	"github.com/ivanhoe/apus_cli/internal/builder"
+	"github.com/ivanhoe/apus_cli/internal/preflight"
 	"github.com/ivanhoe/apus_cli/internal/scaffold"
 	"github.com/ivanhoe/apus_cli/internal/simulator"
 	"github.com/ivanhoe/apus_cli/internal/terminal"
@@ -14,17 +15,29 @@ import (
 
 var newCmd = &cobra.Command{
 	Use:   "new <AppName>",
-	Short: "Create a new iOS project with Apus pre-integrated",
+	Short: "Create a new iOS project with Apus pre-integrated (SwiftUI template)",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runNew,
 }
 
-var appNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+var newTemplate string
+
+func init() {
+	newCmd.Flags().StringVar(&newTemplate, "template", "swiftui", "project template to use (currently only: swiftui)")
+}
 
 func runNew(cmd *cobra.Command, args []string) error {
+	if err := preflight.Validate(preflight.ScopeNew); err != nil {
+		return err
+	}
+
 	appName := args[0]
-	if !appNameRe.MatchString(appName) {
-		return fmt.Errorf("invalid app name %q — use letters, digits, underscores; start with a letter", appName)
+	if err := scaffold.ValidateAppName(appName); err != nil {
+		return err
+	}
+
+	if newTemplate != "swiftui" {
+		return fmt.Errorf("template %q is not supported yet — currently only \"swiftui\" is available", newTemplate)
 	}
 
 	// Prevent overwriting an existing directory
@@ -37,7 +50,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	p := terminal.NewProgress(5)
+	p := terminal.NewProgress(6)
 
 	// ── Step 1: Pick simulator (before generating files so UDID goes into AGENTS.md) ──
 	var sim simulator.Device
@@ -52,7 +65,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		terminal.Info(sim.Name + " · " + sim.UDID)
 	}
 
-	data := scaffold.NewData(appName, sim.UDID)
+	data := scaffold.NewData(appName, sim.UDID, newTemplate)
 
 	// ── Step 2: Generate project files ──
 	{
@@ -99,22 +112,46 @@ func runNew(cmd *cobra.Command, args []string) error {
 	{
 		done := p.Start("Launching app")
 		_ = simulator.OpenSimulatorApp()
+		if err = simulator.ShutdownOtherBootedDevices(sim.UDID); err != nil {
+			terminal.Info("warning: could not shut down other booted simulators; MCP port may conflict")
+		}
+		if err = simulator.Shutdown(sim.UDID); err != nil {
+			done(err)
+			terminal.Fatal("simulator restart failed", err)
+			return err
+		}
 		if err = simulator.Boot(sim.UDID); err != nil {
 			done(err)
 			terminal.Fatal("simulator boot failed", err)
 			return err
+		}
+		if err = simulator.UninstallIfPresent(sim.UDID, result.BundleID); err != nil {
+			terminal.Info("warning: cleanup old install failed, continuing with fresh install")
 		}
 		if err = simulator.Install(sim.UDID, result.AppPath); err != nil {
 			done(err)
 			terminal.Fatal("install failed", err)
 			return err
 		}
-		if err = simulator.Launch(sim.UDID, result.BundleID); err != nil {
+		if err = simulator.LaunchWithProjectRoot(sim.UDID, result.BundleID, projectDir); err != nil {
 			done(err)
 			terminal.Fatal("launch failed", err)
 			return err
 		}
 		done(nil)
+	}
+
+	// ── Step 6: MCP health check ──
+	{
+		done := p.Start("Waiting for MCP server")
+		err = simulator.WaitForMCPReady("http://127.0.0.1:9847/", 30*time.Second)
+		done(err)
+		if err != nil {
+			terminal.Fatal("MCP health check failed", err)
+			terminal.Info("The app was launched, but MCP did not respond on port 9847 in time.")
+			terminal.Info("Try running the app again and confirm no other simulator app is using port 9847.")
+			return err
+		}
 	}
 
 	terminal.Success(appName, sim.Name, "http://localhost:9847/mcp")

@@ -7,13 +7,25 @@ Apus runs at `http://localhost:9847/mcp` when the app is running in the simulato
 ## Build & Run
 
 ```bash
+PROJECT_ROOT="$(pwd)"
+DERIVED_DATA="$PROJECT_ROOT/.build/DerivedData"
+
+# Boot simulator (idempotent)
+xcrun simctl boot {{ .SimulatorUDID }} >/dev/null 2>&1 || true
+
 # Build
-xcodebuild -scheme {{ .AppName }} \
+xcodebuild -project {{ .AppName }}.xcodeproj \
+  -scheme {{ .AppName }} \
   -destination "id={{ .SimulatorUDID }}" \
+  -derivedDataPath "$DERIVED_DATA" \
   -quiet CODE_SIGN_IDENTITY="-"
 
-# Launch
-xcrun simctl launch {{ .SimulatorUDID }} com.{{ .BundleOrg }}.{{ .AppNameLower }}
+# Install freshly built app bundle
+xcrun simctl install {{ .SimulatorUDID }} "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/{{ .AppName }}.app"
+
+# Launch (force restart + pass project root to app process)
+SIMCTL_CHILD_APUS_PROJECT_ROOT="$PROJECT_ROOT" \
+  xcrun simctl launch --terminate-running-process {{ .SimulatorUDID }} com.{{ .BundleOrg }}.{{ .AppNameLower }}
 ```
 
 ## Key MCP Tools

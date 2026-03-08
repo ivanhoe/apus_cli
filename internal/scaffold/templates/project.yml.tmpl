@@ -8,8 +8,12 @@ options:
 
 packages:
   Apus:
-    url: https://github.com/ivanhoe/apus
-    branch: main
+{{- if eq .ApusPackageSource "local" }}
+    path: "{{ .ApusPackagePath }}"
+{{- else }}
+    url: "{{ .ApusPackageURL }}"
+    branch: "{{ .ApusPackageBranch }}"
+{{- end }}
 
 targets:
   {{ .AppName }}:
@@ -22,6 +26,7 @@ targets:
         product: Apus
     settings:
       base:
+        GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.{{ .BundleOrg }}.{{ .AppNameLower }}
         SWIFT_VERSION: 5.9
         CODE_SIGN_IDENTITY: "-"

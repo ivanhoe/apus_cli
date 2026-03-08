@@ -116,3 +116,96 @@ func TestNormalizeLocalApusReference_NoRemote(t *testing.T) {
 		t.Fatalf("expected error when no Apus remote reference exists")
 	}
 }
+
+func TestAddToPackageReferences_Idempotent(t *testing.T) {
+	remoteUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	input := `
+		packageReferences = (
+			AAAAAAAAAAAAAAAAAAAAAAAA /* XCRemoteSwiftPackageReference "Apus" */,
+		);
+`
+
+	got, err := addToPackageReferences(input, remoteUUID)
+	if err != nil {
+		t.Fatalf("addToPackageReferences() error: %v", err)
+	}
+	if got != input {
+		t.Fatalf("expected addToPackageReferences() to be idempotent")
+	}
+}
+
+func TestEnsureApusDependencyWiring_AddsMissingLinks(t *testing.T) {
+	remoteUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	depUUID := "BBBBBBBBBBBBBBBBBBBBBBBB"
+	projectUUID := "EEEEEEEEEEEEEEEEEEEEEEEE"
+	targetUUID := "CCCCCCCCCCCCCCCCCCCCCCCC"
+	frameworksUUID := "DDDDDDDDDDDDDDDDDDDDDDDD"
+
+	input := `/* Begin PBXBuildFile section */
+/* End PBXBuildFile section */
+
+/* Begin PBXProject section */
+		` + projectUUID + ` /* Project object */ = {
+			isa = PBXProject;
+			packageReferences = (
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXNativeTarget section */
+		` + targetUUID + ` /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				` + frameworksUUID + ` /* Frameworks */,
+			);
+			packageProductDependencies = (
+			);
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		` + frameworksUUID + ` /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		` + remoteUUID + ` /* XCRemoteSwiftPackageReference "Apus" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ivanhoe/apus";
+			requirement = {
+				kind = branch;
+				branch = main;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		` + depUUID + ` /* Apus */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ` + remoteUUID + ` /* XCRemoteSwiftPackageReference "Apus" */;
+			productName = Apus;
+		};
+/* End XCSwiftPackageProductDependency section */
+`
+
+	got, err := ensureApusDependencyWiring(input, "MyApp")
+	if err != nil {
+		t.Fatalf("ensureApusDependencyWiring() error: %v", err)
+	}
+
+	if !strings.Contains(got, remoteUUID+` /* XCRemoteSwiftPackageReference "Apus" */`) {
+		t.Fatalf("missing remote Apus package reference link")
+	}
+	if !strings.Contains(got, depUUID+` /* Apus */,`) {
+		t.Fatalf("target should include Apus product dependency")
+	}
+	if !strings.Contains(got, ` /* Apus in Frameworks */ = {isa = PBXBuildFile; productRef = `+depUUID+` /* Apus */; };`) {
+		t.Fatalf("missing Apus PBXBuildFile entry")
+	}
+	if !strings.Contains(got, `/* Apus in Frameworks */,`) {
+		t.Fatalf("frameworks phase should include Apus build file")
+	}
+}

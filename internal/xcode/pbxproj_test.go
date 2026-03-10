@@ -1,6 +1,9 @@
 package xcode
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -207,5 +210,93 @@ func TestEnsureApusDependencyWiring_AddsMissingLinks(t *testing.T) {
 	}
 	if !strings.Contains(got, `/* Apus in Frameworks */,`) {
 		t.Fatalf("frameworks phase should include Apus build file")
+	}
+}
+
+func TestNewUUID_Format(t *testing.T) {
+	uuid, err := newUUID()
+	if err != nil {
+		t.Fatalf("newUUID() error: %v", err)
+	}
+
+	if len(uuid) != 24 {
+		t.Fatalf("expected 24-char UUID, got %d: %s", len(uuid), uuid)
+	}
+
+	matched, _ := regexp.MatchString(`^[0-9A-F]{24}$`, uuid)
+	if !matched {
+		t.Fatalf("UUID should be uppercase hex, got: %s", uuid)
+	}
+}
+
+func TestNewUUID_Unique(t *testing.T) {
+	seen := make(map[string]struct{}, 100)
+	for i := 0; i < 100; i++ {
+		uuid, err := newUUID()
+		if err != nil {
+			t.Fatalf("newUUID() error on iteration %d: %v", i, err)
+		}
+		if _, ok := seen[uuid]; ok {
+			t.Fatalf("duplicate UUID on iteration %d: %s", i, uuid)
+		}
+		seen[uuid] = struct{}{}
+	}
+}
+
+func TestPbxprojPath_DirectXcodeproj(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a .xcodeproj directory with project.pbxproj inside
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	os.MkdirAll(projDir, 0o755)
+	pbxFile := filepath.Join(projDir, "project.pbxproj")
+	os.WriteFile(pbxFile, []byte("{}"), 0o644)
+
+	got, err := pbxprojPath(projDir)
+	if err != nil {
+		t.Fatalf("pbxprojPath() error: %v", err)
+	}
+	if got != pbxFile {
+		t.Fatalf("expected %s, got %s", pbxFile, got)
+	}
+}
+
+func TestPbxprojPath_ParentDir(t *testing.T) {
+	dir := t.TempDir()
+
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	os.MkdirAll(projDir, 0o755)
+	pbxFile := filepath.Join(projDir, "project.pbxproj")
+	os.WriteFile(pbxFile, []byte("{}"), 0o644)
+
+	// Pass the parent dir, not the .xcodeproj directly
+	got, err := pbxprojPath(dir)
+	if err != nil {
+		t.Fatalf("pbxprojPath() error: %v", err)
+	}
+	if got != pbxFile {
+		t.Fatalf("expected %s, got %s", pbxFile, got)
+	}
+}
+
+func TestPbxprojPath_NoPbxproj(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create .xcodeproj dir but no project.pbxproj
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	os.MkdirAll(projDir, 0o755)
+
+	_, err := pbxprojPath(dir)
+	if err == nil {
+		t.Fatalf("expected error when project.pbxproj is missing")
+	}
+}
+
+func TestPbxprojPath_NoXcodeproj(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := pbxprojPath(dir)
+	if err == nil {
+		t.Fatalf("expected error when no .xcodeproj exists")
 	}
 }

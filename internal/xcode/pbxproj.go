@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -49,10 +50,18 @@ func AddApusDependency(projPath string, target string) error {
 	}
 
 	// Generate UUIDs for the 4 new objects
-	refUUID := newUUID()   // XCRemoteSwiftPackageReference
-	depUUID := newUUID()   // XCSwiftPackageProductDependency
-	buildUUID := newUUID() // PBXBuildFile (framework phase entry)
-	_ = buildUUID          // used below
+	refUUID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate UUID: %w", err)
+	}
+	depUUID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate UUID: %w", err)
+	}
+	buildUUID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate UUID: %w", err)
+	}
 
 	// ── 1. Insert XCRemoteSwiftPackageReference section entry ──
 	src, err = insertRemotePackageRef(src, refUUID)
@@ -110,7 +119,10 @@ func ensureApusDependencyWiring(src, target string) (string, error) {
 
 	depUUID := findApusProductDependencyUUID(src, remoteUUID)
 	if depUUID == "" {
-		depUUID = newUUID()
+		depUUID, err = newUUID()
+		if err != nil {
+			return "", fmt.Errorf("generate UUID: %w", err)
+		}
 		src, err = insertProductDependency(src, depUUID, remoteUUID)
 		if err != nil {
 			return "", err
@@ -119,7 +131,10 @@ func ensureApusDependencyWiring(src, target string) (string, error) {
 
 	buildUUID := findApusBuildFileUUID(src, depUUID)
 	if buildUUID == "" {
-		buildUUID = newUUID()
+		buildUUID, err = newUUID()
+		if err != nil {
+			return "", fmt.Errorf("generate UUID: %w", err)
+		}
 		src, err = insertBuildFile(src, buildUUID, depUUID)
 		if err != nil {
 			return "", err
@@ -249,7 +264,7 @@ func pbxprojPath(projPath string) (string, error) {
 		}
 		for _, e := range entries {
 			if e.IsDir() && strings.HasSuffix(e.Name(), ".xcodeproj") {
-				p = strings.Join([]string{projPath, e.Name()}, "/")
+				p = filepath.Join(projPath, e.Name())
 				break
 			}
 		}
@@ -262,12 +277,12 @@ func pbxprojPath(projPath string) (string, error) {
 }
 
 // newUUID generates a 24-character uppercase hex string (Xcode PBX UUID format).
-func newUUID() string {
+func newUUID() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
+		return "", fmt.Errorf("generate PBX UUID: %w", err)
 	}
-	return strings.ToUpper(hex.EncodeToString(b))
+	return strings.ToUpper(hex.EncodeToString(b)), nil
 }
 
 // ── Section insertion helpers ──────────────────────────────────────────────

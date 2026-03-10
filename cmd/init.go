@@ -64,8 +64,10 @@ func runInit(_ *cobra.Command, _ []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("pbxproj modification failed", err)
-			_ = backup.restore()
-			return err
+			if rollbackErr := backup.restore(); rollbackErr != nil {
+				return fmt.Errorf("pbxproj modification failed: %w (rollback failed: %v)", err, rollbackErr)
+			}
+			return fmt.Errorf("pbxproj modification failed; backed-up files restored: %w", err)
 		}
 	}
 
@@ -79,7 +81,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 			if rollbackErr := backup.restore(); rollbackErr != nil {
 				return fmt.Errorf("package resolution failed: %w (rollback failed: %v)", err, rollbackErr)
 			}
-			return fmt.Errorf("package resolution failed; changes were rolled back: %w", err)
+			return fmt.Errorf("package resolution failed; backed-up files restored (resolved packages may remain): %w", err)
 		}
 	}
 
@@ -111,7 +113,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 				if rollbackErr := backup.restore(); rollbackErr != nil {
 					return fmt.Errorf("swift injection failed: %w (rollback failed: %v)", err, rollbackErr)
 				}
-				return fmt.Errorf("swift injection failed; changes were rolled back: %w", err)
+				return fmt.Errorf("swift injection failed; backed-up files restored (resolved packages may remain): %w", err)
 			}
 		}
 	}

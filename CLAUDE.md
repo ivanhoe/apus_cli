@@ -1,4 +1,4 @@
-# cloude.md — Working Memory
+# CLAUDE.md — Working Memory
 
 Date: 2026-03-04
 Repo: `github.com/ivanhoe/apus_cli`

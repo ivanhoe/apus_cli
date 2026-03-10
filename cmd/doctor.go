@@ -24,7 +24,7 @@ func init() {
 	doctorCmd.Flags().StringVar(&doctorTarget, "target", "", "App target to inspect when the project contains multiple app targets")
 }
 
-func runDoctor(_ *cobra.Command, _ []string) error {
+func runDoctor(cmd *cobra.Command, _ []string) error {
 	projectDir, err := resolveCommandPath(doctorPath)
 	if err != nil {
 		err = usageError(err)
@@ -56,50 +56,57 @@ func runDoctor(_ *cobra.Command, _ []string) error {
 		}, reportErr)
 	}
 
-	fmt.Printf("Doctor report: %s\n", report.Classification)
-	fmt.Println()
-	fmt.Println("Checks:")
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+
+	fmt.Fprintf(out, "Doctor report: %s\n", report.Classification)
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Checks:")
 	for _, c := range report.Checks {
+		writer := out
+		if c.Status == preflight.CheckStatusFail {
+			writer = errOut
+		}
 		switch c.Status {
 		case preflight.CheckStatusPass:
-			fmt.Printf("  [ok]   %s\n", c.Name)
+			fmt.Fprintf(writer, "  [ok]   %s\n", c.Name)
 		case preflight.CheckStatusWarn:
-			fmt.Printf("  [warn] %s\n", c.Name)
+			fmt.Fprintf(writer, "  [warn] %s\n", c.Name)
 		default:
-			fmt.Printf("  [fail] %s\n", c.Name)
+			fmt.Fprintf(writer, "  [fail] %s\n", c.Name)
 		}
 		if c.Detail != "" {
-			fmt.Printf("         %s\n", c.Detail)
+			fmt.Fprintf(writer, "         %s\n", c.Detail)
 		}
 		if c.Hint != "" {
-			fmt.Printf("         %s\n", c.Hint)
+			fmt.Fprintf(writer, "         %s\n", c.Hint)
 		}
 	}
 
 	if report.Project != nil && report.Project.ProjectPath != "" {
-		fmt.Println()
-		fmt.Println("Project:")
-		fmt.Printf("  directory: %s\n", report.Project.Directory)
-		fmt.Printf("  project:   %s\n", report.Project.ProjectPath)
-		fmt.Printf("  target:    %s\n", report.Project.Target)
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Project:")
+		fmt.Fprintf(out, "  directory: %s\n", report.Project.Directory)
+		fmt.Fprintf(out, "  project:   %s\n", report.Project.ProjectPath)
+		fmt.Fprintf(out, "  target:    %s\n", report.Project.Target)
 		if report.Project.EntryFile != "" {
-			fmt.Printf("  entry:     %s\n", report.Project.EntryFile)
+			fmt.Fprintf(out, "  entry:     %s\n", report.Project.EntryFile)
 		}
 	}
 
 	if report.HasFailures() {
-		fmt.Println()
-		fmt.Println("Doctor found blocking issues.")
+		fmt.Fprintln(errOut)
+		fmt.Fprintln(errOut, "Doctor found blocking issues.")
 		return classifyPreflightReportError(report)
 	}
 
-	fmt.Println()
+	fmt.Fprintln(out)
 	if report.HasWarnings() {
-		fmt.Println("Environment looks usable, but this project is in a risky state.")
+		fmt.Fprintln(out, "Environment looks usable, but this project is in a risky state.")
 		return nil
 	}
 
-	fmt.Println("Environment looks good.")
+	fmt.Fprintln(out, "Environment looks good.")
 	return nil
 }
 

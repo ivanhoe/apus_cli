@@ -20,6 +20,7 @@ type Data struct {
 	AppName           string
 	AppNameLower      string
 	BundleOrg         string
+	MCPPort           int
 	SimulatorUDID     string
 	Template          string
 	ApusPackageSource string
@@ -34,18 +35,23 @@ const (
 	apusPackagePathEnv       = "APUS_PACKAGE_PATH"
 	apusPackageSourceRemote  = "remote"
 	apusPackageSourceLocal   = "local"
+	defaultMCPPort           = 9847
 )
 
 // NewData returns a Data struct derived from appName.
-func NewData(appName, simulatorUDID, template string) Data {
+func NewData(appName, simulatorUDID, template string, mcpPort int) Data {
 	if template == "" {
 		template = "swiftui"
+	}
+	if mcpPort == 0 {
+		mcpPort = defaultMCPPort
 	}
 
 	return Data{
 		AppName:           appName,
 		AppNameLower:      strings.ToLower(appName),
 		BundleOrg:         "dev",
+		MCPPort:           mcpPort,
 		SimulatorUDID:     simulatorUDID,
 		Template:          template,
 		ApusPackageSource: apusPackageSourceRemote,
@@ -143,10 +149,18 @@ func renderTemplate(name, destPath string, data Data) error {
 var appNameRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
 
 var swiftReservedKeywords = map[string]struct{}{
-	"class": {}, "struct": {}, "enum": {}, "protocol": {}, "extension": {},
-	"func": {}, "import": {}, "var": {}, "let": {}, "if": {}, "else": {},
-	"switch": {}, "case": {}, "default": {}, "for": {}, "while": {}, "do": {},
-	"return": {}, "break": {}, "continue": {}, "init": {}, "deinit": {},
+	"actor": {}, "any": {}, "as": {}, "associatedtype": {}, "async": {}, "await": {},
+	"break": {}, "case": {}, "catch": {}, "class": {}, "continue": {},
+	"default": {}, "defer": {}, "deinit": {}, "do": {}, "else": {},
+	"enum": {}, "extension": {}, "fallthrough": {}, "false": {}, "fileprivate": {},
+	"for": {}, "func": {}, "guard": {}, "if": {}, "import": {}, "in": {},
+	"infix": {}, "init": {}, "inout": {}, "internal": {}, "is": {},
+	"isolated": {}, "let": {}, "nil": {}, "nonisolated": {}, "open": {},
+	"operator": {}, "postfix": {}, "precedencegroup": {}, "prefix": {}, "private": {},
+	"protocol": {}, "public": {}, "repeat": {}, "rethrows": {}, "return": {},
+	"self": {}, "some": {}, "static": {}, "struct": {}, "subscript": {},
+	"super": {}, "switch": {}, "throw": {}, "throws": {}, "true": {},
+	"try": {}, "typealias": {}, "var": {}, "where": {}, "while": {},
 }
 
 // ValidateAppName validates that appName is safe for filesystem + Swift usage.

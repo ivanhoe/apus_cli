@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -276,7 +277,10 @@ func createProjectBackup(cwd string, files []string) (*projectBackup, error) {
 	entries := make([]backupFile, 0, len(files))
 	for i, original := range files {
 		if _, err := os.Stat(original); err != nil {
-			continue
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat %s: %w", original, err)
 		}
 
 		if err := os.MkdirAll(backupDir, 0o755); err != nil {
@@ -298,13 +302,13 @@ func createProjectBackup(cwd string, files []string) (*projectBackup, error) {
 }
 
 func (b *projectBackup) restore() error {
-	var rollbackErr error
+	var errs []error
 	for _, f := range b.files {
 		if err := copyFile(f.backup, f.original); err != nil {
-			rollbackErr = err
+			errs = append(errs, fmt.Errorf("restore %s: %w", filepath.Base(f.original), err))
 		}
 	}
-	return rollbackErr
+	return errors.Join(errs...)
 }
 
 func copyFile(src, dst string) error {

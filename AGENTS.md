@@ -131,5 +131,3 @@ Key tools: `get_logs`, `get_screenshot`, `get_view_hierarchy`, `ui_interact`, `g
 ### Known risks / review notes
 
 - Rollback messaging in `cmd/init.go` can overstate what is restored (backup scope is limited to selected files).
-- Backup directory naming uses second-level granularity and can collide on very fast repeated runs.
-- Step 1 rollback error is currently ignored (`_ = backup.restore()`).

@@ -77,7 +77,22 @@ func runRemove(_ *cobra.Command, _ []string) error {
 	}
 
 	// Check if Apus is actually integrated
-	hasApus, _ := xcode.HasApusIntegration(projectDir)
+	hasApus, scanErr := xcode.HasApusIntegration(projectDir)
+	if scanErr != nil {
+		err = projectError(scanErr)
+		if removeJSON {
+			return writeJSONResult(struct {
+				Mode    string       `json:"mode"`
+				Project *jsonProject `json:"project"`
+				Error   string       `json:"error"`
+			}{
+				Mode:    removeMode(),
+				Project: jsonProjectFromInfo(projectDir, info),
+				Error:   err.Error(),
+			}, err)
+		}
+		return err
+	}
 	dependencyState, depErr := xcode.DetectApusDependency(info.ProjectPath)
 	if depErr != nil {
 		err = projectError(depErr)

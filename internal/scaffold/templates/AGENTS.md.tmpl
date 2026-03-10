@@ -4,7 +4,7 @@
 
 ## MCP Server
 
-Apus runs at `http://localhost:9847/mcp` when the app is running in the simulator or on a device.
+Apus runs at `http://localhost:{{ .MCPPort }}/mcp` when the app is running in the simulator or on a device.
 
 ## Build & Run
 
@@ -28,6 +28,10 @@ xcrun simctl install {{ .SimulatorUDID }} "$DERIVED_DATA/Build/Products/Debug-ip
 # Launch (force restart + pass project root to app process)
 SIMCTL_CHILD_APUS_PROJECT_ROOT="$PROJECT_ROOT" \
   xcrun simctl launch --terminate-running-process {{ .SimulatorUDID }} com.{{ .BundleOrg }}.{{ .AppNameLower }}
+
+# If simctl rejects --terminate-running-process, retry without that flag.
+SIMCTL_CHILD_APUS_PROJECT_ROOT="$PROJECT_ROOT" \
+  xcrun simctl launch {{ .SimulatorUDID }} com.{{ .BundleOrg }}.{{ .AppNameLower }}
 ```
 
 ## Key MCP Tools
@@ -45,7 +49,7 @@ SIMCTL_CHILD_APUS_PROJECT_ROOT="$PROJECT_ROOT" \
 ## Quick Start
 
 ```
-POST http://localhost:9847/mcp
+POST http://localhost:{{ .MCPPort }}/mcp
 Content-Type: application/json
 
 {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_screenshot","arguments":{}}}

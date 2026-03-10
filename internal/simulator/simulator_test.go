@@ -82,16 +82,46 @@ func TestLaunchWithProjectRoot_ReturnsErrorWhenBothAttemptsFail(t *testing.T) {
 	orig := runSimctlFn
 	t.Cleanup(func() { runSimctlFn = orig })
 
+	calls := 0
 	runSimctlFn = func(timeout time.Duration, env map[string]string, args ...string) (string, error) {
-		return "simctl failed", errors.New("exit status 1")
+		calls++
+		if calls == 1 {
+			return "unknown option --terminate-running-process", errors.New("exit status 64")
+		}
+		return "fallback launch failed", errors.New("exit status 1")
 	}
 
 	err := LaunchWithProjectRoot("SIM-UDID", "com.dev.myapp", "")
 	if err == nil {
 		t.Fatalf("expected launch to fail")
 	}
+	if calls != 2 {
+		t.Fatalf("expected 2 simctl calls (initial + fallback), got %d", calls)
+	}
 	if !strings.Contains(err.Error(), "simctl launch") {
 		t.Fatalf("expected launch error, got: %v", err)
+	}
+}
+
+func TestLaunchWithProjectRoot_NoFallbackOnOtherErrors(t *testing.T) {
+	orig := runSimctlFn
+	t.Cleanup(func() { runSimctlFn = orig })
+
+	calls := 0
+	runSimctlFn = func(timeout time.Duration, env map[string]string, args ...string) (string, error) {
+		calls++
+		return "failed to launch app", errors.New("exit status 1")
+	}
+
+	err := LaunchWithProjectRoot("SIM-UDID", "com.dev.myapp", "")
+	if err == nil {
+		t.Fatalf("expected launch to fail")
+	}
+	if calls != 1 {
+		t.Fatalf("expected a single simctl call for non-flag errors, got %d", calls)
+	}
+	if !strings.Contains(err.Error(), "failed to launch app") {
+		t.Fatalf("expected original launch output in error, got: %v", err)
 	}
 }
 

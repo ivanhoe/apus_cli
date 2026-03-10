@@ -129,7 +129,7 @@ Creates a new SwiftUI app with Apus pre-integrated, builds it, launches it, and 
 
 ```bash
 apus new MyApp
-apus new MyApp --port 9999
+apus new MyApp --port 9999   # custom MCP port for generated app + health check
 ```
 
 ### `apus init`
@@ -184,6 +184,7 @@ Start here:
 
 Start with the support matrix before trying `apus init` on a new repo shape:
 
+<<<<<<< HEAD
 - [Support matrix](./docs/support-matrix.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 
@@ -192,6 +193,12 @@ The current validation corpus lives in [`fixtures/matrix.json`](./fixtures/matri
 ## For Maintainers
 
 Contributor and release workflow docs live in [CONTRIBUTING.md](./CONTRIBUTING.md).
+=======
+1. **First time**: `apus new` or `apus init` sets up your project (requires Xcode installed)
+2. **After that**: build and run from any editor or CLI -- no need to keep Xcode open
+3. Apus MCP server runs at `http://localhost:9847/mcp` inside the simulator by default
+4. Your AI agent connects to inspect logs, network, views, take screenshots, and hot-reload Swift code
+>>>>>>> 9e5e440 (fix: address CodeRabbit review follow-ups)
 
 ## License
 

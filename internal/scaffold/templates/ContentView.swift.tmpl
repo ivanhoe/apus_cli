@@ -10,7 +10,7 @@ struct ContentView: View {
             Text("{{ .AppName }}")
                 .font(.largeTitle.bold())
 
-            Text("Apus MCP server is running.\nConnect your AI agent at\nlocalhost:9847")
+            Text("Apus MCP server is running.\nConnect your AI agent at\nlocalhost:{{ .MCPPort }}")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

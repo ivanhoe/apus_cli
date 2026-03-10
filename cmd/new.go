@@ -29,10 +29,14 @@ const defaultMCPPort = 9847
 
 func init() {
 	newCmd.Flags().StringVar(&newTemplate, "template", "swiftui", "project template to use (currently only: swiftui)")
-	newCmd.Flags().IntVar(&mcpPort, "port", defaultMCPPort, "MCP server port to poll for health check")
+	newCmd.Flags().IntVar(&mcpPort, "port", defaultMCPPort, "MCP server port for the generated app and health check")
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
+	if err := validateMCPPort(mcpPort); err != nil {
+		return usageError(err)
+	}
+
 	if err := preflight.Validate(preflight.ScopeNew); err != nil {
 		return preflightError(err)
 	}
@@ -71,7 +75,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		terminal.Info(sim.Name + " · " + sim.UDID)
 	}
 
-	data := scaffold.NewData(appName, sim.UDID, newTemplate)
+	data := scaffold.NewData(appName, sim.UDID, newTemplate, mcpPort)
 
 	// ── Step 2: Generate project files ──
 	{
@@ -157,5 +161,12 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	terminal.Success(appName, sim.Name, fmt.Sprintf("http://localhost:%d/mcp", mcpPort))
+	return nil
+}
+
+func validateMCPPort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("port %d is out of range; use 1-65535", port)
+	}
 	return nil
 }

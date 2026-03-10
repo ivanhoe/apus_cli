@@ -411,7 +411,7 @@ func pbxprojPath(projPath string) (string, error) {
 			}
 		}
 	}
-	path := p + "/project.pbxproj"
+	path := filepath.Join(p, "project.pbxproj")
 	if _, err := os.Stat(path); err != nil {
 		return "", fmt.Errorf("project.pbxproj not found at %s", path)
 	}
@@ -730,13 +730,13 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 	phasePattern := regexp.MustCompile(`(?s)` + frameworksPhaseUUID + ` /\* (?:Frameworks|` + regexp.QuoteMeta(apusFrameworksPhase) + `) \*/ = \{\s*isa = PBXFrameworksBuildPhase`)
 	phaseLoc := phasePattern.FindStringIndex(src)
 	if phaseLoc == nil {
-		return src, nil
+		return "", fmt.Errorf("PBXFrameworksBuildPhase %s not found for target %s", frameworksPhaseUUID, targetName)
 	}
 	phaseIdx := phaseLoc[0]
 
 	phaseEnd := strings.Index(src[phaseIdx:], "};")
 	if phaseEnd == -1 {
-		return src, nil
+		return "", fmt.Errorf("malformed PBXFrameworksBuildPhase %s for target %s", frameworksPhaseUUID, targetName)
 	}
 	phaseSection := src[phaseIdx : phaseIdx+phaseEnd+2]
 
@@ -748,7 +748,7 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 	entry := fmt.Sprintf("\n\t\t\t\t%s /* %s in Frameworks */,", buildUUID, apusProduct)
 	reFiles := regexp.MustCompile(`(files\s*=\s*\()`)
 	if !reFiles.MatchString(phaseSection) {
-		return src, nil
+		return "", fmt.Errorf("PBXFrameworksBuildPhase %s has no files list for build %s", frameworksPhaseUUID, buildUUID)
 	}
 	newPhaseSection := reFiles.ReplaceAllStringFunc(phaseSection, func(s string) string {
 		return s + entry

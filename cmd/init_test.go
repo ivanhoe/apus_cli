@@ -15,8 +15,12 @@ func TestCreateProjectBackup(t *testing.T) {
 	// Create fake files to back up
 	file1 := filepath.Join(dir, "project.pbxproj")
 	file2 := filepath.Join(dir, "AppEntry.swift")
-	os.WriteFile(file1, []byte("pbxproj-content"), 0o644)
-	os.WriteFile(file2, []byte("swift-content"), 0o644)
+	if err := os.WriteFile(file1, []byte("pbxproj-content"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", file1, err)
+	}
+	if err := os.WriteFile(file2, []byte("swift-content"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", file2, err)
+	}
 
 	backup, err := createProjectBackup(dir, []string{file1, file2})
 	if err != nil {

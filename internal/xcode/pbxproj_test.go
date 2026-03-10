@@ -299,8 +299,12 @@ func TestEnsureApusDependencyWiring_AddsMissingLinks(t *testing.T) {
 		t.Fatalf("ensureApusDependencyWiring() error: %v", err)
 	}
 
-	if !strings.Contains(got, remoteUUID+` /* XCRemoteSwiftPackageReference "Apus" */`) {
-		t.Fatalf("missing remote Apus package reference link")
+	matched, err := regexp.MatchString(`(?s)packageReferences = \(\s*`+remoteUUID+` /\* XCRemoteSwiftPackageReference "Apus" \*/,`, got)
+	if err != nil {
+		t.Fatalf("packageReferences regexp error: %v", err)
+	}
+	if !matched {
+		t.Fatalf("project should include Apus in packageReferences:\n%s", got)
 	}
 	if !strings.Contains(got, depUUID+` /* Apus */,`) {
 		t.Fatalf("target should include Apus product dependency")

@@ -93,13 +93,18 @@ struct MyApp: App {
     }
     var body: some Scene { WindowGroup { Text("Hi") } }
 }`
-	os.WriteFile(file, []byte(content), 0o644)
+	if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
 
 	if err := InjectApus(file); err != nil {
 		t.Fatalf("InjectApus() error: %v", err)
 	}
 
-	data, _ := os.ReadFile(file)
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
 	src := string(data)
 
 	if !strings.Contains(src, "import Apus") {
@@ -474,6 +479,7 @@ func TestFindInit(t *testing.T) {
 		src  string
 		want bool
 	}{
+		{"flush-left", "init() {\n    print(\"hi\")\n}", true},
 		{"4-space indent", "\n    init() {\n        print(\"hi\")\n    }", true},
 		{"8-space indent", "\n        init() {\n        print(\"hi\")\n    }", true},
 		{"tab indent", "\n\tinit() {\n\t\tprint(\"hi\")\n\t}", true},

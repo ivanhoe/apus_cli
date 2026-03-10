@@ -37,5 +37,3 @@ Repo: `github.com/ivanhoe/apus_cli`
 ## Open review notes
 
 - Rollback wording can claim more than restored scope.
-- Backup folder timestamp can collide on repeated runs within the same second.
-- Step 1 rollback error is swallowed.

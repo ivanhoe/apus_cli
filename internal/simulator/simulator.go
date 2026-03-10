@@ -43,12 +43,12 @@ func ListAvailable() ([]Device, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "xcrun", "simctl", "list", "devices", "available", "--json")
-	out, err := cmd.Output()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("simctl list timed out after %s", simctlListTimeout)
 		}
-		return nil, fmt.Errorf("simctl list: %w", err)
+		return nil, fmt.Errorf("simctl list: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 
 	var result struct {
@@ -198,12 +198,19 @@ func LaunchWithProjectRoot(udid, bundleID, projectRoot string) error {
 	}
 
 	// Older simctl versions may not support --terminate-running-process.
+	if !looksLikeUnsupportedTerminateFlag(out, err) {
+		return fmt.Errorf("simctl launch: %w\n%s", err, out)
+	}
+
 	fallbackArgs := []string{"launch", udid, bundleID}
 	fallbackOut, fallbackErr := runSimctlFn(simctlLaunchTimeout, env, fallbackArgs...)
 	if fallbackErr != nil {
-		return fmt.Errorf("simctl launch: %w\n%s", err, out)
+		return fmt.Errorf(
+			"simctl launch fallback after unsupported --terminate-running-process: %w\n%s",
+			fallbackErr,
+			fallbackOut,
+		)
 	}
-	_ = fallbackOut
 	return nil
 }
 
@@ -242,6 +249,22 @@ func looksLikeNotInstalled(output string) bool {
 	return strings.Contains(text, "not installed") ||
 		strings.Contains(text, "not found") ||
 		strings.Contains(text, "found nothing to uninstall")
+}
+
+func looksLikeUnsupportedTerminateFlag(out string, err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := strings.ToLower(out + "\n" + err.Error())
+	if !strings.Contains(msg, "terminate-running-process") {
+		return false
+	}
+
+	return strings.Contains(msg, "unknown option") ||
+		strings.Contains(msg, "unrecognized option") ||
+		strings.Contains(msg, "unknown flag") ||
+		strings.Contains(msg, "invalid option")
 }
 
 func deviceState(udid string) (string, error) {

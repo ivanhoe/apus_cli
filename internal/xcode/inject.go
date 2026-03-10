@@ -142,7 +142,7 @@ func injectStart(src string) (string, error) {
 // initPattern matches `init()` declarations with any indentation (spaces or tabs),
 // optional `override` keyword, and optional spacing before the opening brace.
 // It avoids matching `init(param:)` (init with parameters) or `deinit`.
-var initPattern = regexp.MustCompile(`(?m)^[ \t]+(override[ \t]+)?init\(\)[ \t]*\{`)
+var initPattern = regexp.MustCompile(`(?m)^[ \t]*(override[ \t]+)?init\(\)[ \t]*\{`)
 
 // findInit returns the byte index of an `init()` declaration in src, or -1.
 func findInit(src string) int {

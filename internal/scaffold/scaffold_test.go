@@ -17,6 +17,8 @@ func TestValidateAppName(t *testing.T) {
 		{name: "starts with digit", appName: "1App", wantErr: true},
 		{name: "contains space", appName: "My App", wantErr: true},
 		{name: "swift keyword", appName: "class", wantErr: true},
+		{name: "contextual keyword", appName: "async", wantErr: true},
+		{name: "self keyword", appName: "self", wantErr: true},
 	}
 
 	for _, tc := range tests {
@@ -34,7 +36,7 @@ func TestValidateAppName(t *testing.T) {
 
 func TestGenerateAtomicCreatesProject(t *testing.T) {
 	dir := t.TempDir()
-	data := NewData("MyApp", "SIM-UDID", "swiftui")
+	data := NewData("MyApp", "SIM-UDID", "swiftui", 9999)
 
 	if err := Generate(data, dir); err != nil {
 		t.Fatalf("Generate() error: %v", err)
@@ -65,16 +67,36 @@ func TestGenerateAtomicCreatesProject(t *testing.T) {
 
 	agentsText := string(agents)
 	mustContain := []string{
+		"http://localhost:9999/mcp",
 		"-derivedDataPath \"$DERIVED_DATA\"",
 		"simctl install",
 		"SIMCTL_CHILD_APUS_PROJECT_ROOT=\"$PROJECT_ROOT\"",
 		"--terminate-running-process",
+		"xcrun simctl launch SIM-UDID com.dev.myapp",
 	}
 
 	for _, fragment := range mustContain {
 		if !strings.Contains(agentsText, fragment) {
 			t.Fatalf("AGENTS.md should contain %q", fragment)
 		}
+	}
+
+	appSwiftPath := filepath.Join(projectDir, "Sources", "MyAppApp.swift")
+	appSwift, err := os.ReadFile(appSwiftPath)
+	if err != nil {
+		t.Fatalf("read App.swift: %v", err)
+	}
+	if !strings.Contains(string(appSwift), "Apus.shared.start(port: 9999, interceptNetwork: true)") {
+		t.Fatalf("App.swift should pass the configured MCP port")
+	}
+
+	contentViewPath := filepath.Join(projectDir, "Sources", "ContentView.swift")
+	contentView, err := os.ReadFile(contentViewPath)
+	if err != nil {
+		t.Fatalf("read ContentView.swift: %v", err)
+	}
+	if !strings.Contains(string(contentView), "localhost:9999") {
+		t.Fatalf("ContentView.swift should mention the configured MCP port")
 	}
 
 	projectYMLPath := filepath.Join(projectDir, "project.yml")
@@ -99,7 +121,7 @@ func TestGenerateFailsWhenDirectoryExists(t *testing.T) {
 		t.Fatalf("mkdir existing dir: %v", err)
 	}
 
-	data := NewData("MyApp", "SIM-UDID", "swiftui")
+	data := NewData("MyApp", "SIM-UDID", "swiftui", defaultMCPPort)
 	if err := Generate(data, dir); err == nil {
 		t.Fatalf("expected Generate() to fail when directory exists")
 	}
@@ -107,7 +129,7 @@ func TestGenerateFailsWhenDirectoryExists(t *testing.T) {
 
 func TestGenerateFailsForUnsupportedTemplate(t *testing.T) {
 	dir := t.TempDir()
-	data := NewData("MyApp", "SIM-UDID", "uikit")
+	data := NewData("MyApp", "SIM-UDID", "uikit", defaultMCPPort)
 	if err := Generate(data, dir); err == nil {
 		t.Fatalf("expected unsupported template error")
 	}
@@ -128,7 +150,7 @@ func TestGenerateUsesNearestLocalApusPackageWhenPresent(t *testing.T) {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
 
-	data := NewData("MyApp", "SIM-UDID", "swiftui")
+	data := NewData("MyApp", "SIM-UDID", "swiftui", defaultMCPPort)
 	if err := Generate(data, workspace); err != nil {
 		t.Fatalf("Generate() error: %v", err)
 	}
@@ -160,7 +182,7 @@ func TestGenerateUsesConfiguredApusPackagePath(t *testing.T) {
 
 	t.Setenv("APUS_PACKAGE_PATH", "custom-apus")
 
-	data := NewData("MyApp", "SIM-UDID", "swiftui")
+	data := NewData("MyApp", "SIM-UDID", "swiftui", defaultMCPPort)
 	if err := Generate(data, root); err != nil {
 		t.Fatalf("Generate() error: %v", err)
 	}
@@ -181,7 +203,7 @@ func TestGenerateFailsForInvalidConfiguredApusPath(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("APUS_PACKAGE_PATH", "./missing-apus")
 
-	data := NewData("MyApp", "SIM-UDID", "swiftui")
+	data := NewData("MyApp", "SIM-UDID", "swiftui", defaultMCPPort)
 	err := Generate(data, root)
 	if err == nil {
 		t.Fatalf("expected Generate() to fail for invalid APUS_PACKAGE_PATH")

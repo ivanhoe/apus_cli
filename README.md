@@ -23,6 +23,9 @@ Verify your local toolchain (Xcode, xcodebuild, xcodegen, etc.).
 
 ```bash
 apus doctor
+apus doctor --path /path/to/project
+apus doctor --path /path/to/project --target MyAppBeta
+apus doctor --json --path /path/to/project
 ```
 
 ### `apus new <AppName>`
@@ -42,6 +45,9 @@ Best-effort integration of Apus into an existing Xcode project. Backs up modifie
 cd /path/to/your/project
 apus init
 apus init --target MyAppBeta
+apus init --path /path/to/your/project
+apus init --dry-run
+apus init --dry-run --json --path /path/to/your/project
 ```
 
 This will:
@@ -49,6 +55,16 @@ This will:
 2. Resolve package dependencies
 3. Inject `Apus.shared.start()` in your app entry point
 4. Write an `AGENTS.md` with MCP tool reference
+
+### `apus status`
+
+Check whether Apus is integrated in an existing Xcode project.
+
+```bash
+apus status --path /path/to/your/project
+apus status --path /path/to/your/project --target MyAppBeta
+apus status --json --path /path/to/your/project
+```
 
 ### `apus remove`
 
@@ -58,6 +74,8 @@ Remove Apus from an existing Xcode project (reverses `apus init`).
 cd /path/to/your/project
 apus remove
 apus remove --target MyAppBeta
+apus remove --path /path/to/your/project
+apus remove --dry-run --json --path /path/to/your/project
 ```
 
 This will:
@@ -79,6 +97,20 @@ We track end-to-end coverage goals in [`fixtures/matrix.json`](./fixtures/matrix
 ```bash
 go run ./tools/fixturematrix validate
 go run ./tools/fixturematrix plan
+go build -o .tmp/bin/apus .
+go build -o .tmp/bin/fixturerunner ./tools/fixturerunner
+./.tmp/bin/fixturerunner -apus-bin ./.tmp/bin/apus -apus-package-path ../apus
+./.tmp/bin/fixturerunner -apus-bin ./.tmp/bin/apus -fixture open-source-swiftui-real
+```
+
+## Release Smoke Test
+
+Every release build should validate the packaged binary against the smoke fixtures before publishing:
+
+```bash
+go build -o .tmp/bin/fixturerunner ./tools/fixturerunner
+go build -o .tmp/bin/apus .
+APUS_PACKAGE_PATH=../apus ./scripts/release-smoke.sh ./.tmp/bin/apus
 ```
 
 ## How it works

@@ -669,6 +669,76 @@ func TestAddAndRemoveApusDependencyWithLocalPath_RoundTripsWithoutFrameworksPhas
 	}
 }
 
+func TestAddAndRemoveApusDependency_RoundTripsWithExistingEmptyFrameworksPhase(t *testing.T) {
+	projectUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	targetUUID := "BBBBBBBBBBBBBBBBBBBBBBBB"
+	frameworksUUID := "CCCCCCCCCCCCCCCCCCCCCCCC"
+
+	pbxproj := `// !$*UTF8*$!
+{
+	objects = {
+
+/* Begin PBXBuildFile section */
+/* End PBXBuildFile section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		` + frameworksUUID + ` /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		` + targetUUID + ` /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				111111111111111111111111 /* Sources */,
+				` + frameworksUUID + ` /* Frameworks */,
+				222222222222222222222222 /* Resources */,
+			);
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		` + projectUUID + ` /* Project object */ = {
+			isa = PBXProject;
+		};
+/* End PBXProject section */
+
+	};
+	rootObject = ` + projectUUID + ` /* Project object */;
+}
+`
+
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	pbxPath := filepath.Join(projDir, "project.pbxproj")
+	if err := os.WriteFile(pbxPath, []byte(pbxproj), 0o644); err != nil {
+		t.Fatalf("write pbxproj: %v", err)
+	}
+
+	if err := AddApusDependency(projDir, "MyApp"); err != nil {
+		t.Fatalf("AddApusDependency() error: %v", err)
+	}
+	if err := RemoveApusDependency(projDir, "MyApp"); err != nil {
+		t.Fatalf("RemoveApusDependency() error: %v", err)
+	}
+
+	updated, err := os.ReadFile(pbxPath)
+	if err != nil {
+		t.Fatalf("read pbxproj: %v", err)
+	}
+	if normalizePBXProjForComparison(string(updated)) != normalizePBXProjForComparison(pbxproj) {
+		t.Fatalf("expected existing empty frameworks phase to be preserved.\nwant:\n%s\n\ngot:\n%s", pbxproj, string(updated))
+	}
+}
+
 func TestRemoveApusDependency_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	projDir := filepath.Join(dir, "MyApp.xcodeproj")

@@ -34,26 +34,26 @@ func init() {
 
 func runNew(cmd *cobra.Command, args []string) error {
 	if err := preflight.Validate(preflight.ScopeNew); err != nil {
-		return err
+		return preflightError(err)
 	}
 
 	appName := args[0]
 	if err := scaffold.ValidateAppName(appName); err != nil {
-		return err
+		return usageError(err)
 	}
 
 	if newTemplate != "swiftui" {
-		return fmt.Errorf("template %q is not supported yet — currently only \"swiftui\" is available", newTemplate)
+		return usageError(fmt.Errorf("template %q is not supported yet — currently only \"swiftui\" is available", newTemplate))
 	}
 
 	// Prevent overwriting an existing directory
 	if _, err := os.Stat(appName); err == nil {
-		return fmt.Errorf("directory %q already exists", appName)
+		return usageError(fmt.Errorf("directory %q already exists", appName))
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
+		return mutationError(fmt.Errorf("getwd: %w", err))
 	}
 
 	p := terminal.NewProgress(6)
@@ -66,7 +66,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("no iPhone simulator available", err)
-			return markPrinted(err)
+			return markPrinted(preflightError(err))
 		}
 		terminal.Info(sim.Name + " · " + sim.UDID)
 	}
@@ -80,7 +80,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("scaffold failed", err)
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 	}
 
@@ -92,13 +92,13 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = builder.EnsureXcodeGen(); err != nil {
 			done(err)
 			terminal.Fatal("xcodegen not available", err)
-			return markPrinted(err)
+			return markPrinted(preflightError(err))
 		}
 		err = builder.Generate(projectDir)
 		done(err)
 		if err != nil {
 			terminal.Fatal("xcodegen generate failed", err)
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 	}
 
@@ -110,7 +110,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("build failed", err)
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 	}
 
@@ -124,7 +124,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = simulator.Boot(sim.UDID); err != nil {
 			done(err)
 			terminal.Fatal("simulator boot failed", err)
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 		if err = simulator.UninstallIfPresent(sim.UDID, result.BundleID); err != nil {
 			terminal.Info("warning: cleanup old install failed, continuing with fresh install")
@@ -132,12 +132,12 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = simulator.Install(sim.UDID, result.AppPath); err != nil {
 			done(err)
 			terminal.Fatal("install failed", err)
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 		if err = simulator.LaunchWithProjectRoot(sim.UDID, result.BundleID, projectDir); err != nil {
 			done(err)
 			terminal.Fatal("launch failed", err)
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 		done(nil)
 	}
@@ -152,7 +152,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 			terminal.Fatal("MCP health check failed", err)
 			terminal.Info(fmt.Sprintf("The app was launched, but MCP did not respond on port %d in time.", mcpPort))
 			terminal.Info(fmt.Sprintf("Try running the app again and confirm no other simulator app is using port %d.", mcpPort))
-			return markPrinted(err)
+			return markPrinted(mutationError(err))
 		}
 	}
 

@@ -37,6 +37,6 @@ func Execute() {
 		if shouldPrintError(err) {
 			_, _ = os.Stderr.WriteString(err.Error() + "\n")
 		}
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }

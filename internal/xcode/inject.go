@@ -110,7 +110,7 @@ func injectImport(src string) (string, error) {
 	}
 
 	// Insert the block after the last import line
-	insertLines := strings.Split("\n"+apusImportBlock, "\n")
+	insertLines := strings.Split(strings.TrimSuffix(apusImportBlock, "\n"), "\n")
 	newLines := make([]string, 0, len(lines)+len(insertLines))
 	newLines = append(newLines, lines[:lastImport+1]...)
 	newLines = append(newLines, insertLines...)
@@ -222,6 +222,7 @@ func UninjectApus(filePath string) error {
 
 	// Collapse 3+ consecutive blank lines to 2
 	src = collapseBlankLines(src)
+	src = normalizeBlankLinesBeforeBody(src)
 
 	return os.WriteFile(filePath, []byte(src), 0o644)
 }
@@ -229,13 +230,13 @@ func UninjectApus(filePath string) error {
 // removeImportBlock removes `#if DEBUG / import Apus / #endif` or bare `import Apus`.
 func removeImportBlock(src string) string {
 	// Wrapped form
-	re := regexp.MustCompile(`(?m)\n?^[ \t]*#if DEBUG\n[ \t]*import Apus\n[ \t]*#endif\n?`)
+	re := regexp.MustCompile(`(?m)^[ \t]*#if DEBUG\n[ \t]*import Apus\n[ \t]*#endif\n?`)
 	if re.MatchString(src) {
-		return re.ReplaceAllString(src, "\n")
+		return re.ReplaceAllString(src, "")
 	}
 	// Bare form
-	re = regexp.MustCompile(`(?m)\n?^[ \t]*import Apus\n?`)
-	return re.ReplaceAllString(src, "\n")
+	re = regexp.MustCompile(`(?m)^[ \t]*import Apus\n?`)
+	return re.ReplaceAllString(src, "")
 }
 
 // removeStartCall removes `#if DEBUG / Apus.shared.start(...) / #endif` or bare start call.
@@ -253,7 +254,7 @@ func removeStartCall(src string) string {
 // removeEmptyInit removes an init() {} block that has an empty body (whitespace only).
 var emptyInitPattern = regexp.MustCompile(`(?m)\n?[ \t]*(override[ \t]+)?init\(\)[ \t]*\{[ \t]*\n?[ \t]*\}[ \t]*\n?`)
 var synthesizedEmptyInitBeforeBodyPattern = regexp.MustCompile(`(?m)\n[ \t]*init\(\)[ \t]*\{\s*\n[ \t]*\}\n\n([ \t]*var body)`)
-var blankLineAfterTypeBracePattern = regexp.MustCompile(`\{\n(?:[ \t]*\n)+([ \t]*(?:var|let|func|override|init|@))`)
+var blankLineAfterTypeBracePattern = regexp.MustCompile(`\{\n(?:[ \t]*\n)+([ \t]*(?:var|let|func|override|init))`)
 
 func removeEmptyInit(src string) string {
 	src = synthesizedEmptyInitBeforeBodyPattern.ReplaceAllString(src, "\n$1")
@@ -266,6 +267,39 @@ var multiBlankLines = regexp.MustCompile(`\n{3,}`)
 
 func collapseBlankLines(src string) string {
 	return multiBlankLines.ReplaceAllString(src, "\n\n")
+}
+
+func normalizeBlankLinesBeforeBody(src string) string {
+	lines := strings.Split(src, "\n")
+	out := make([]string, 0, len(lines))
+
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" {
+			out = append(out, lines[i])
+			continue
+		}
+
+		j := i
+		for j < len(lines) && strings.TrimSpace(lines[j]) == "" {
+			j++
+		}
+
+		if j < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[j]), "var body") {
+			prev := len(out) - 1
+			for prev >= 0 && strings.TrimSpace(out[prev]) == "" {
+				prev--
+			}
+			if prev >= 0 && !strings.HasSuffix(strings.TrimSpace(out[prev]), "{") {
+				out = append(out, lines[i])
+				i = j - 1
+				continue
+			}
+		}
+
+		out = append(out, lines[i])
+	}
+
+	return strings.Join(out, "\n")
 }
 
 func findMainAttributeIndex(src string) int {

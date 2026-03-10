@@ -42,9 +42,20 @@ func run(args []string) int {
 		fmt.Fprintln(os.Stderr, "--apus-bin is required")
 		return 2
 	}
-	if strings.TrimSpace(*apusPackagePath) == "" {
-		fmt.Fprintln(os.Stderr, "--apus-package-path is required")
-		return 2
+
+	apusBinPath, err := filepath.Abs(*apusBin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve --apus-bin: %v\n", err)
+		return 1
+	}
+
+	apusPackageAbsPath := ""
+	if strings.TrimSpace(*apusPackagePath) != "" {
+		apusPackageAbsPath, err = filepath.Abs(*apusPackagePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "resolve --apus-package-path: %v\n", err)
+			return 1
+		}
 	}
 
 	manifest, err := fixturematrix.Load(*manifestPath)
@@ -75,8 +86,8 @@ func run(args []string) int {
 	runner := fixtureRunner{
 		manifestDir:     manifestDir,
 		workRoot:        *workRoot,
-		apusBin:         *apusBin,
-		apusPackagePath: *apusPackagePath,
+		apusBin:         apusBinPath,
+		apusPackagePath: apusPackageAbsPath,
 	}
 
 	for i, fixture := range fixtures {
@@ -100,29 +111,42 @@ type fixtureRunner struct {
 }
 
 func (r fixtureRunner) runFixture(fixture fixturematrix.Fixture) error {
-	if fixture.SourceKind != fixturematrix.SourceSynthetic {
-		return fmt.Errorf("external fixtures are not executable yet")
-	}
-
-	srcDir := filepath.Join(r.manifestDir, fixture.Path)
 	workDir, err := os.MkdirTemp(r.workRoot, fixture.ID+"-")
 	if err != nil {
 		return fmt.Errorf("create work dir: %w", err)
 	}
-
-	if err := copyDir(srcDir, workDir); err != nil {
-		return fmt.Errorf("copy fixture: %w", err)
+	workDir, err = filepath.Abs(workDir)
+	if err != nil {
+		return fmt.Errorf("resolve work dir: %w", err)
 	}
 
-	if err := prepareFixture(workDir); err != nil {
+	projectDir := workDir
+	switch fixture.SourceKind {
+	case fixturematrix.SourceSynthetic:
+		srcDir := filepath.Join(r.manifestDir, fixture.Path)
+		if err := copyDir(srcDir, workDir); err != nil {
+			return fmt.Errorf("copy fixture: %w", err)
+		}
+	case fixturematrix.SourceExternal:
+		if err := checkoutExternalFixture(workDir, fixture); err != nil {
+			return err
+		}
+		if fixture.Subdir != "" {
+			projectDir = filepath.Join(workDir, fixture.Subdir)
+		}
+	default:
+		return fmt.Errorf("unsupported source kind %q", fixture.SourceKind)
+	}
+
+	if err := prepareFixture(projectDir); err != nil {
 		return err
 	}
 
 	switch fixture.ExpectedOutcome {
 	case fixturematrix.OutcomeSupported, fixturematrix.OutcomeSupportedWithTarget:
-		return r.runSupportedFixture(workDir, fixture)
+		return r.runSupportedFixture(projectDir, fixture)
 	case fixturematrix.OutcomeUnsupportedCleanly:
-		return r.runUnsupportedFixture(workDir, fixture)
+		return r.runUnsupportedFixture(projectDir, fixture)
 	default:
 		return fmt.Errorf("unsupported fixture outcome %q", fixture.ExpectedOutcome)
 	}
@@ -132,6 +156,10 @@ func (r fixtureRunner) runSupportedFixture(workDir string, fixture fixturematrix
 	info, err := xcode.DetectProjectWithTarget(workDir, fixture.Target)
 	if err != nil {
 		return fmt.Errorf("detect baseline project: %w", err)
+	}
+	invokerDir, err := os.MkdirTemp(r.workRoot, fixture.ID+"-invoker-")
+	if err != nil {
+		return fmt.Errorf("create invoker dir: %w", err)
 	}
 
 	pbxPath := filepath.Join(info.ProjectPath, "project.pbxproj")
@@ -148,29 +176,72 @@ func (r fixtureRunner) runSupportedFixture(workDir string, fixture fixturematrix
 		}
 	}
 
-	statusArgs := []string{"status"}
+	doctorArgs := []string{"doctor", "--json", "--path", workDir}
+	if fixture.Target != "" {
+		doctorArgs = append(doctorArgs, "--target", fixture.Target)
+	}
+	doctorResult, err := runCommand(invokerDir, r.apusBin, doctorArgs...)
+	if err != nil {
+		return fmt.Errorf("doctor failed: %w\n%s", err, doctorResult.combined())
+	}
+	if !strings.Contains(doctorResult.stdout, `"classification": "supported"`) &&
+		!strings.Contains(doctorResult.stdout, `"classification": "risky"`) {
+		return fmt.Errorf("expected doctor supported/risky JSON output, got:\n%s", doctorResult.combined())
+	}
+
+	statusArgs := []string{"status", "--json", "--path", workDir}
 	if fixture.Target != "" {
 		statusArgs = append(statusArgs, "--target", fixture.Target)
 	}
-	statusResult, err := runCommand(workDir, r.apusBin, statusArgs...)
+	statusResult, err := runCommand(invokerDir, r.apusBin, statusArgs...)
 	if err != nil {
 		return fmt.Errorf("baseline status failed: %w\n%s", err, statusResult.combined())
 	}
-	if !strings.Contains(statusResult.stdout, "not integrated") {
-		return fmt.Errorf("expected baseline status to report not integrated, got:\n%s", statusResult.combined())
+	if !strings.Contains(statusResult.stdout, `"integrated": false`) {
+		return fmt.Errorf("expected baseline status JSON to report not integrated, got:\n%s", statusResult.combined())
+	}
+
+	beforeDryRun, err := hashRegularFiles(workDir)
+	if err != nil {
+		return fmt.Errorf("hash files before init dry-run: %w", err)
+	}
+
+	dryRunArgs := appendPackagePath([]string{"init", "--dry-run", "--json", "--path", workDir}, r.apusPackagePath)
+	if fixture.Target != "" {
+		dryRunArgs = append(dryRunArgs, "--target", fixture.Target)
+	}
+	dryRunResult, err := runCommand(invokerDir, r.apusBin, dryRunArgs...)
+	if err != nil {
+		return fmt.Errorf("init dry-run failed: %w\n%s", err, dryRunResult.combined())
+	}
+	if !strings.Contains(dryRunResult.stdout, `"mode": "dry-run"`) {
+		return fmt.Errorf("expected init dry-run JSON output, got:\n%s", dryRunResult.combined())
+	}
+
+	afterDryRun, err := hashRegularFiles(workDir)
+	if err != nil {
+		return fmt.Errorf("hash files after init dry-run: %w", err)
+	}
+	if beforeDryRun != afterDryRun {
+		return fmt.Errorf("init --dry-run modified files unexpectedly")
 	}
 
 	if fixture.TargetRequired {
-		if _, err := runCommand(workDir, r.apusBin, "init", "--package-path", r.apusPackagePath); err == nil {
+		args := appendPackagePath([]string{"init", "--path", workDir}, r.apusPackagePath)
+		result, err := runCommand(invokerDir, r.apusBin, args...)
+		if err == nil {
 			return fmt.Errorf("expected init without --target to fail for %s", fixture.ID)
+		}
+		if result.exitCode != 5 {
+			return fmt.Errorf("expected init without --target to exit with code 5, got %d\n%s", result.exitCode, result.combined())
 		}
 	}
 
-	initArgs := []string{"init", "--package-path", r.apusPackagePath}
+	initArgs := appendPackagePath([]string{"init", "--path", workDir}, r.apusPackagePath)
 	if fixture.Target != "" {
 		initArgs = append(initArgs, "--target", fixture.Target)
 	}
-	initResult, err := runCommand(workDir, r.apusBin, initArgs...)
+	initResult, err := runCommand(invokerDir, r.apusBin, initArgs...)
 	if err != nil {
 		return fmt.Errorf("init failed: %w\n%s", err, initResult.combined())
 	}
@@ -198,24 +269,49 @@ func (r fixtureRunner) runSupportedFixture(workDir string, fixture fixturematrix
 		return fmt.Errorf("expected AGENTS.md after init: %w", err)
 	}
 
-	statusAfterInit, err := runCommand(workDir, r.apusBin, statusArgs...)
+	statusAfterInit, err := runCommand(invokerDir, r.apusBin, statusArgs...)
 	if err != nil {
 		return fmt.Errorf("status after init failed: %w\n%s", err, statusAfterInit.combined())
 	}
-	if !strings.Contains(statusAfterInit.stdout, "Apus integration:") {
-		return fmt.Errorf("expected integrated status output, got:\n%s", statusAfterInit.combined())
+	if !strings.Contains(statusAfterInit.stdout, `"integrated": true`) {
+		return fmt.Errorf("expected integrated status JSON output, got:\n%s", statusAfterInit.combined())
 	}
 
-	removeArgs := []string{"remove"}
+	beforeRemoveDryRun, err := hashRegularFiles(workDir)
+	if err != nil {
+		return fmt.Errorf("hash files before remove dry-run: %w", err)
+	}
+
+	removeDryRunArgs := []string{"remove", "--dry-run", "--json", "--path", workDir}
+	if fixture.Target != "" {
+		removeDryRunArgs = append(removeDryRunArgs, "--target", fixture.Target)
+	}
+	removeDryRunResult, err := runCommand(invokerDir, r.apusBin, removeDryRunArgs...)
+	if err != nil {
+		return fmt.Errorf("remove dry-run failed: %w\n%s", err, removeDryRunResult.combined())
+	}
+	if !strings.Contains(removeDryRunResult.stdout, `"mode": "dry-run"`) {
+		return fmt.Errorf("expected remove dry-run JSON output, got:\n%s", removeDryRunResult.combined())
+	}
+
+	afterRemoveDryRun, err := hashRegularFiles(workDir)
+	if err != nil {
+		return fmt.Errorf("hash files after remove dry-run: %w", err)
+	}
+	if beforeRemoveDryRun != afterRemoveDryRun {
+		return fmt.Errorf("remove --dry-run modified files unexpectedly")
+	}
+
+	removeArgs := []string{"remove", "--json", "--path", workDir}
 	if fixture.Target != "" {
 		removeArgs = append(removeArgs, "--target", fixture.Target)
 	}
-	removeResult, err := runCommand(workDir, r.apusBin, removeArgs...)
+	removeResult, err := runCommand(invokerDir, r.apusBin, removeArgs...)
 	if err != nil {
 		return fmt.Errorf("remove failed: %w\n%s", err, removeResult.combined())
 	}
-	if !strings.Contains(removeResult.stdout, "Done.") {
-		return fmt.Errorf("expected remove success output, got:\n%s", removeResult.combined())
+	if !strings.Contains(removeResult.stdout, `"applied": true`) {
+		return fmt.Errorf("expected remove JSON output, got:\n%s", removeResult.combined())
 	}
 
 	state, err = xcode.DetectApusDependency(info.ProjectPath)
@@ -256,28 +352,45 @@ func (r fixtureRunner) runSupportedFixture(workDir string, fixture fixturematrix
 		}
 	}
 
-	finalStatus, err := runCommand(workDir, r.apusBin, statusArgs...)
+	finalStatus, err := runCommand(invokerDir, r.apusBin, statusArgs...)
 	if err != nil {
 		return fmt.Errorf("final status failed: %w\n%s", err, finalStatus.combined())
 	}
-	if !strings.Contains(finalStatus.stdout, "not integrated") {
-		return fmt.Errorf("expected final status to report not integrated, got:\n%s", finalStatus.combined())
+	if !strings.Contains(finalStatus.stdout, `"integrated": false`) {
+		return fmt.Errorf("expected final status JSON to report not integrated, got:\n%s", finalStatus.combined())
 	}
 
 	return nil
 }
 
 func (r fixtureRunner) runUnsupportedFixture(workDir string, fixture fixturematrix.Fixture) error {
+	invokerDir, err := os.MkdirTemp(r.workRoot, fixture.ID+"-invoker-")
+	if err != nil {
+		return fmt.Errorf("create invoker dir: %w", err)
+	}
+
+	doctorArgs := []string{"doctor", "--json", "--path", workDir}
+	if fixture.Target != "" {
+		doctorArgs = append(doctorArgs, "--target", fixture.Target)
+	}
+	doctorResult, err := runCommand(invokerDir, r.apusBin, doctorArgs...)
+	if err == nil {
+		return fmt.Errorf("expected doctor to fail for unsupported fixture, got:\n%s", doctorResult.combined())
+	}
+	if !strings.Contains(doctorResult.stdout, `"classification": "unsupported"`) {
+		return fmt.Errorf("expected doctor unsupported JSON output, got:\n%s", doctorResult.combined())
+	}
+
 	before, err := hashRegularFiles(workDir)
 	if err != nil {
 		return fmt.Errorf("hash baseline files: %w", err)
 	}
 
-	args := []string{"init", "--package-path", r.apusPackagePath}
+	args := appendPackagePath([]string{"init", "--path", workDir}, r.apusPackagePath)
 	if fixture.Target != "" {
 		args = append(args, "--target", fixture.Target)
 	}
-	result, err := runCommand(workDir, r.apusBin, args...)
+	result, err := runCommand(invokerDir, r.apusBin, args...)
 	if err == nil {
 		return fmt.Errorf("expected init to fail for unsupported fixture, got:\n%s", result.combined())
 	}
@@ -313,8 +426,9 @@ func filterFixture(fixtures []fixturematrix.Fixture, id string) []fixturematrix.
 }
 
 type commandResult struct {
-	stdout string
-	stderr string
+	stdout   string
+	stderr   string
+	exitCode int
 }
 
 func (r commandResult) combined() string {
@@ -335,10 +449,39 @@ func runCommand(dir string, name string, args ...string) (commandResult, error) 
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	return commandResult{
+	result := commandResult{
 		stdout: stdout.String(),
 		stderr: stderr.String(),
-	}, err
+	}
+	if err == nil {
+		return result, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		result.exitCode = exitErr.ExitCode()
+	}
+	return result, err
+}
+
+func appendPackagePath(args []string, packagePath string) []string {
+	if strings.TrimSpace(packagePath) == "" {
+		return args
+	}
+	return append(args, "--package-path", packagePath)
+}
+
+func checkoutExternalFixture(workDir string, fixture fixturematrix.Fixture) error {
+	cloneResult, err := runCommand("", "git", "clone", fixture.Repo, workDir)
+	if err != nil {
+		return fmt.Errorf("git clone failed: %w\n%s", err, cloneResult.combined())
+	}
+
+	checkoutResult, err := runCommand(workDir, "git", "checkout", fixture.Ref)
+	if err != nil {
+		return fmt.Errorf("git checkout %s failed: %w\n%s", fixture.Ref, err, checkoutResult.combined())
+	}
+
+	return nil
 }
 
 func copyDir(srcDir, dstDir string) error {

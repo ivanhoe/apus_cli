@@ -24,6 +24,7 @@ to validate repeatedly, not just a one-off repo name.
 
 Ready synthetic fixtures live under `fixtures/synthetic/<id>/` and should be fully self-contained.
 For Xcode-based fixtures, prefer `xcodegen` inputs over checked-in `.xcodeproj` bundles so diffs stay reviewable.
+Ready external fixtures are pinned by repo URL + SHA and are cloned into a temp workspace by `fixturerunner`.
 
 ## Local Commands
 

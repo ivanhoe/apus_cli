@@ -393,6 +393,44 @@ func TestUninjectApus_SynthesizedInit(t *testing.T) {
 	}
 }
 
+func TestUninjectApus_SynthesizedInitPreservesBlankLineBeforePropertyWrapper(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "App.swift")
+	original := "import SwiftUI\nimport EnvironmentOverrides\n\n@main\nstruct MainApp: App {\n    \n    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate\n\n    var body: some Scene {\n        WindowGroup {\n            appDelegate.rootView\n        }\n    }\n}\n"
+	os.WriteFile(file, []byte(original), 0o644)
+
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	if string(data) != original {
+		t.Fatalf("expected roundtrip to preserve property-wrapper spacing.\nwant:\n%s\n\ngot:\n%s", original, string(data))
+	}
+}
+
+func TestUninjectApus_PreservesImportToDocCommentSpacing(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "App.swift")
+	original := "import SwiftUI\n/// - Tag: SingleAppDefinitionTag\n@main\nstruct FrutaApp: App {\n    var body: some Scene {\n        WindowGroup {\n            Text(\"Hi\")\n        }\n    }\n}\n"
+	os.WriteFile(file, []byte(original), 0o644)
+
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	if string(data) != original {
+		t.Fatalf("expected roundtrip to preserve import/doc-comment spacing.\nwant:\n%s\n\ngot:\n%s", original, string(data))
+	}
+}
+
 func TestUninjectApus_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "MyApp.swift")

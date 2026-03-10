@@ -15,6 +15,7 @@ const (
 	apusBranch           = "main"
 	apusProduct          = "Apus"
 	apusLegacyMinVersion = "0.3.0"
+	apusFrameworksPhase  = "Apus Frameworks"
 )
 
 // DependencyState describes whether the project references Apus remotely, locally, or both.
@@ -666,7 +667,7 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 		return "", fmt.Errorf("no buildPhases found in target %s", targetName)
 	}
 
-	reUUID := regexp.MustCompile(`([0-9A-F]{24})\s*/\* Frameworks \*/`)
+	reUUID := regexp.MustCompile(`([0-9A-F]{24})\s*/\* (?:Frameworks|` + regexp.QuoteMeta(apusFrameworksPhase) + `) \*/`)
 	uuidMatch := reUUID.FindStringSubmatch(match[2])
 
 	if uuidMatch == nil {
@@ -677,14 +678,14 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 		}
 
 		// Insert PBXFrameworksBuildPhase object into its section
-		phaseObj := fmt.Sprintf(`		%s /* Frameworks */ = {
+		phaseObj := fmt.Sprintf(`		%s /* %s */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				%s /* %s in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-		};`, phaseUUID, buildUUID, apusProduct)
+		};`, phaseUUID, apusFrameworksPhase, buildUUID, apusProduct)
 
 		const fwSectionEnd = "/* End PBXFrameworksBuildPhase section */"
 		if strings.Contains(src, fwSectionEnd) {
@@ -714,7 +715,7 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 			return "", err
 		}
 		targetObj = src[targetObjStart:targetObjEnd]
-		phaseEntry := fmt.Sprintf("\n\t\t\t\t%s /* Frameworks */,", phaseUUID)
+		phaseEntry := fmt.Sprintf("\n\t\t\t\t%s /* %s */,", phaseUUID, apusFrameworksPhase)
 		reBP := regexp.MustCompile(`(buildPhases\s*=\s*\()`)
 		if loc := reBP.FindStringIndex(targetObj); loc != nil {
 			newTarget := targetObj[:loc[1]] + phaseEntry + targetObj[loc[1]:]
@@ -726,7 +727,7 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 	// Frameworks phase already exists — append build file to it
 	frameworksPhaseUUID := uuidMatch[1]
 
-	phasePattern := regexp.MustCompile(`(?s)` + frameworksPhaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase`)
+	phasePattern := regexp.MustCompile(`(?s)` + frameworksPhaseUUID + ` /\* (?:Frameworks|` + regexp.QuoteMeta(apusFrameworksPhase) + `) \*/ = \{\s*isa = PBXFrameworksBuildPhase`)
 	phaseLoc := phasePattern.FindStringIndex(src)
 	if phaseLoc == nil {
 		return src, nil
@@ -862,7 +863,7 @@ func removeEmptyFrameworksPhases(src, targetName string) string {
 	}
 
 	targetObj := src[targetObjStart:targetObjEnd]
-	reUUID := regexp.MustCompile(`([0-9A-F]{24}) /\* Frameworks \*/`)
+	reUUID := regexp.MustCompile(`([0-9A-F]{24}) /\* ` + regexp.QuoteMeta(apusFrameworksPhase) + ` \*/`)
 	matches := reUUID.FindAllStringSubmatch(targetObj, -1)
 	if len(matches) == 0 {
 		return src
@@ -871,7 +872,7 @@ func removeEmptyFrameworksPhases(src, targetName string) string {
 	var emptyPhaseUUIDs []string
 	for _, match := range matches {
 		phaseUUID := match[1]
-		phasePattern := regexp.MustCompile(`(?s)\n?\s*` + phaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase;(.*?)\n\t\t\};[ \t]*`)
+		phasePattern := regexp.MustCompile(`(?s)\n?\s*` + phaseUUID + ` /\* ` + regexp.QuoteMeta(apusFrameworksPhase) + ` \*/ = \{\s*isa = PBXFrameworksBuildPhase;(.*?)\n\t\t\};[ \t]*`)
 		phaseMatch := phasePattern.FindStringSubmatch(src)
 		if len(phaseMatch) == 0 {
 			continue
@@ -881,7 +882,7 @@ func removeEmptyFrameworksPhases(src, targetName string) string {
 			continue
 		}
 
-		refPattern := regexp.MustCompile(`\n[ \t]*` + phaseUUID + ` /\* Frameworks \*/,\n`)
+		refPattern := regexp.MustCompile(`\n[ \t]*` + phaseUUID + ` /\* ` + regexp.QuoteMeta(apusFrameworksPhase) + ` \*/,\n`)
 		targetObj = refPattern.ReplaceAllString(targetObj, "\n")
 		emptyPhaseUUIDs = append(emptyPhaseUUIDs, phaseUUID)
 	}
@@ -892,7 +893,7 @@ func removeEmptyFrameworksPhases(src, targetName string) string {
 
 	src = src[:targetObjStart] + targetObj + src[targetObjEnd:]
 	for _, phaseUUID := range emptyPhaseUUIDs {
-		phasePattern := regexp.MustCompile(`(?s)\n?\s*` + phaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase;.*?\n\t\t\};[ \t]*`)
+		phasePattern := regexp.MustCompile(`(?s)\n?\s*` + phaseUUID + ` /\* ` + regexp.QuoteMeta(apusFrameworksPhase) + ` \*/ = \{\s*isa = PBXFrameworksBuildPhase;.*?\n\t\t\};[ \t]*`)
 		src = phasePattern.ReplaceAllString(src, "\n")
 	}
 

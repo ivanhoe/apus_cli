@@ -61,20 +61,25 @@
     },
     {
       "id": "open-source-swiftui-real",
-      "display_name": "Representative open-source SwiftUI app",
-      "stage": "planned",
+      "display_name": "Open-source SwiftUI single-target app",
+      "stage": "ready",
       "source_kind": "external",
       "expected_outcome": "supported",
-      "notes": "Pin repo URL and SHA once a stable public fixture is selected."
+      "repo": "https://github.com/nalexn/clean-architecture-swiftui.git",
+      "ref": "9eca97b8cfff96a14084b564b1fefd949c93d232",
+      "notes": "Real-world SwiftUI app with an existing package graph and a single primary app target."
     },
     {
       "id": "open-source-multi-target-real",
-      "display_name": "Representative open-source multi-target app",
-      "stage": "planned",
+      "display_name": "Open-source multi-target SwiftUI app",
+      "stage": "ready",
       "source_kind": "external",
       "expected_outcome": "supported-with-target",
       "target_required": true,
-      "notes": "Pin repo URL and SHA once we choose a real repo with app + widget/extension coverage."
+      "target": "Fruta iOS",
+      "repo": "https://github.com/apple-sample-code/FrutaBuildingAFeatureRichAppWithSwiftUI.git",
+      "ref": "dc9af9a5fb5dfe334630aab727fa2369f442c7f2",
+      "notes": "Real repo with app, widget, App Clip, and macOS targets. Requires --target to stay deterministic."
     }
   ]
 }

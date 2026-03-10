@@ -1,6 +1,6 @@
 # Contributing
 
-This repo contains the Go CLI for integrating [Apus](https://github.com/ivanhoe/apus) into iOS projects.
+This repo contains the `apus` CLI for integrating the [Apus runtime](https://github.com/ivanhoe/apus) into iOS projects.
 
 ## Local setup
 

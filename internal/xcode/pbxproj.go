@@ -297,7 +297,25 @@ func insertRemotePackageRef(src, refUUID string) (string, error) {
 			};
 		};`, refUUID, apusProduct, apusRepoURL, apusBranch)
 
-	return insertBeforeSectionEnd(src, "/* End XCRemoteSwiftPackageReference section */", entry)
+	// Section may not exist if the project has zero SPM dependencies — create it.
+	const sectionEnd = "/* End XCRemoteSwiftPackageReference section */"
+	if !strings.Contains(src, sectionEnd) {
+		section := "\n/* Begin XCRemoteSwiftPackageReference section */\n" +
+			entry + "\n" +
+			sectionEnd + "\n"
+		// Insert inside the objects dictionary — before the `};` that closes it.
+		// That `};` is the last one before `rootObject`.
+		rootIdx := strings.Index(src, "rootObject")
+		if rootIdx == -1 {
+			return "", fmt.Errorf("cannot find rootObject in pbxproj to insert XCRemoteSwiftPackageReference section")
+		}
+		closingIdx := strings.LastIndex(src[:rootIdx], "};")
+		if closingIdx == -1 {
+			return "", fmt.Errorf("cannot find objects closing brace in pbxproj")
+		}
+		return src[:closingIdx] + section + src[closingIdx:], nil
+	}
+	return insertBeforeSectionEnd(src, sectionEnd, entry)
 }
 
 func insertProductDependency(src, depUUID, refUUID string) (string, error) {
@@ -310,11 +328,17 @@ func insertProductDependency(src, depUUID, refUUID string) (string, error) {
 	// Section may not exist yet if there are no SPM deps — create it
 	const sectionEnd = "/* End XCSwiftPackageProductDependency section */"
 	if !strings.Contains(src, sectionEnd) {
-		// Insert a new section before the final closing brace of the objects block
 		section := "\n/* Begin XCSwiftPackageProductDependency section */\n" +
 			entry + "\n" +
-			"/* End XCSwiftPackageProductDependency section */\n"
-		return insertBeforeSectionEnd(src, "/* End XCRemoteSwiftPackageReference section */", section)
+			sectionEnd + "\n"
+		// Insert AFTER XCRemoteSwiftPackageReference section (not inside it)
+		const refEnd = "/* End XCRemoteSwiftPackageReference section */"
+		idx := strings.Index(src, refEnd)
+		if idx == -1 {
+			return "", fmt.Errorf("cannot find XCRemoteSwiftPackageReference section end marker")
+		}
+		insertPoint := idx + len(refEnd)
+		return src[:insertPoint] + section + src[insertPoint:], nil
 	}
 	return insertBeforeSectionEnd(src, sectionEnd, entry)
 }
@@ -353,7 +377,7 @@ func addToPackageReferences(src, refUUID string) (string, error) {
 		if lastBrace == -1 {
 			return "", fmt.Errorf("cannot find PBXProject object closing brace")
 		}
-		injection := fmt.Sprintf("\t\t\tpackageReferences = (\n\t\t\t\t%s /* XCRemoteSwiftPackageReference \"%s\" */,\n\t\t\t);\n\t\t", refUUID, apusProduct)
+		injection := fmt.Sprintf("\t\t\tpackageReferences = (\n\t\t\t\t%s /* XCRemoteSwiftPackageReference \"%s\" */,\n\t\t\t);\n", refUUID, apusProduct)
 		return src[:lastBrace] + injection + src[lastBrace:], nil
 	}
 
@@ -448,25 +472,78 @@ func findTargetObject(src, targetName string) (int, int, error) {
 }
 
 // addToBuildPhase appends a build file reference to the PBXFrameworksBuildPhase for the target.
+// If the target has no Frameworks build phase, one is created.
 func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
-	// Find the frameworks phase UUID from the target's buildPhases list
 	targetObjStart, targetObjEnd, err := findTargetObject(src, targetName)
 	if err != nil {
 		return "", err
 	}
 	targetObj := src[targetObjStart:targetObjEnd]
 
-	reBuildPhases := regexp.MustCompile(`buildPhases\s*=\s*\(([^)]*)\)`)
+	reBuildPhases := regexp.MustCompile(`(buildPhases\s*=\s*\()([^)]*)\)`)
 	match := reBuildPhases.FindStringSubmatch(targetObj)
 	if match == nil {
 		return "", fmt.Errorf("no buildPhases found in target %s", targetName)
 	}
 
 	reUUID := regexp.MustCompile(`([0-9A-F]{24})\s*/\* Frameworks \*/`)
-	uuidMatch := reUUID.FindStringSubmatch(match[1])
+	uuidMatch := reUUID.FindStringSubmatch(match[2])
+
 	if uuidMatch == nil {
+		// No Frameworks build phase exists — create one
+		phaseUUID, err := newUUID()
+		if err != nil {
+			return "", fmt.Errorf("generate UUID for Frameworks phase: %w", err)
+		}
+
+		// Insert PBXFrameworksBuildPhase object into its section
+		phaseObj := fmt.Sprintf(`		%s /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				%s /* %s in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};`, phaseUUID, buildUUID, apusProduct)
+
+		const fwSectionEnd = "/* End PBXFrameworksBuildPhase section */"
+		if strings.Contains(src, fwSectionEnd) {
+			src, err = insertBeforeSectionEnd(src, fwSectionEnd, phaseObj)
+			if err != nil {
+				return "", err
+			}
+		} else {
+			// Create the entire PBXFrameworksBuildPhase section
+			section := "\n/* Begin PBXFrameworksBuildPhase section */\n" +
+				phaseObj + "\n" +
+				fwSectionEnd + "\n"
+			// Insert before PBXGroup or PBXNativeTarget section
+			for _, marker := range []string{"/* Begin PBXGroup section */", "/* Begin PBXNativeTarget section */"} {
+				idx := strings.Index(src, marker)
+				if idx != -1 {
+					src = src[:idx] + section + src[idx:]
+					break
+				}
+			}
+		}
+
+		// Add the phase UUID to the target's buildPhases list
+		// Re-find target since src changed
+		targetObjStart, targetObjEnd, err = findTargetObject(src, targetName)
+		if err != nil {
+			return "", err
+		}
+		targetObj = src[targetObjStart:targetObjEnd]
+		phaseEntry := fmt.Sprintf("\n\t\t\t\t%s /* Frameworks */,", phaseUUID)
+		reBP := regexp.MustCompile(`(buildPhases\s*=\s*\()`)
+		if loc := reBP.FindStringIndex(targetObj); loc != nil {
+			newTarget := targetObj[:loc[1]] + phaseEntry + targetObj[loc[1]:]
+			src = src[:targetObjStart] + newTarget + src[targetObjEnd:]
+		}
 		return src, nil
 	}
+
+	// Frameworks phase already exists — append build file to it
 	frameworksPhaseUUID := uuidMatch[1]
 
 	phasePattern := regexp.MustCompile(`(?s)` + frameworksPhaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase`)

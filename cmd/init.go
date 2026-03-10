@@ -1,62 +1,180 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/ivanhoe/apus_cli/internal/builder"
+	"github.com/ivanhoe/apus_cli/internal/preflight"
 	"github.com/ivanhoe/apus_cli/internal/terminal"
 	"github.com/ivanhoe/apus_cli/internal/xcode"
 	"github.com/spf13/cobra"
 )
 
+var initDryRun bool
+var initJSON bool
+var initPath string
+var initTarget string
+var initPackagePath string
+
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Add Apus to an existing Xcode project",
-	Args:  cobra.NoArgs,
-	RunE:  runInit,
+	Short: "Best-effort add Apus to an existing Xcode project (backs up files first)",
+	Long: `apus init is a best-effort command.
+It currently works best with SwiftUI-style app entry files and standard Xcode layouts.
+If preflight checks fail or injection cannot be performed safely, prefer manual integration.`,
+	Args: cobra.NoArgs,
+	RunE: runInit,
+}
+
+func init() {
+	initCmd.Flags().StringVar(&initPath, "path", "", "Project directory to inspect instead of the current working directory")
+	initCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "Show what would change without modifying any files")
+	initCmd.Flags().BoolVar(&initJSON, "json", false, "Print the dry-run plan as JSON")
+	initCmd.Flags().StringVar(&initTarget, "target", "", "App target to modify when the project contains multiple app targets")
+	initCmd.Flags().StringVar(&initPackagePath, "package-path", "", "Use a local Apus package path instead of the default remote GitHub dependency")
 }
 
 func runInit(_ *cobra.Command, _ []string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return fmt.Errorf("getwd: %w", err)
+	if initJSON && !initDryRun {
+		return usageError(fmt.Errorf("--json currently requires --dry-run for `apus init`"))
 	}
 
-	// ── Detect project ──
-	info, err := xcode.DetectProject(cwd)
+	projectDir, err := resolveCommandPath(initPath)
 	if err != nil {
-		terminal.Fatal("project detection failed", err)
+		err = usageError(err)
+		if initJSON {
+			return writeJSONResult(struct {
+				Mode  string `json:"mode"`
+				Error string `json:"error"`
+			}{
+				Mode:  "dry-run",
+				Error: err.Error(),
+			}, err)
+		}
 		return err
 	}
 
-	terminal.Detected(filepath.Base(info.ProjectPath), info.Target+" (SwiftUI)")
+	resolvedPackagePath, err := resolveInitPackagePath(initPackagePath)
+	if err != nil {
+		err = usageError(err)
+		if initJSON {
+			return writeJSONResult(struct {
+				Mode  string `json:"mode"`
+				Error string `json:"error"`
+			}{
+				Mode:  "dry-run",
+				Error: err.Error(),
+			}, err)
+		}
+		return err
+	}
 
+	report := preflight.RunWithOptions(preflight.Options{
+		Scope:      preflight.ScopeInit,
+		ProjectDir: projectDir,
+		Target:     initTarget,
+	})
+	if report.HasFailures() {
+		reportErr := classifyPreflightReportError(report)
+		if initDryRun && initJSON {
+			return writeJSONResult(struct {
+				Mode   string           `json:"mode"`
+				Report preflight.Report `json:"report"`
+				Error  string           `json:"error"`
+			}{
+				Mode:   "dry-run",
+				Report: report,
+				Error:  reportErr.Error(),
+			}, reportErr)
+		}
+		terminal.Fatal("preflight checks failed", reportErr)
+		return markPrinted(reportErr)
+	}
+
+	info := report.Project.Info
+	if info == nil {
+		return unsupportedError(fmt.Errorf("preflight succeeded without project detection details"))
+	}
+
+	plan, err := buildInitPlan(projectDir, info, report, resolvedPackagePath)
+	if err != nil {
+		if initJSON && initDryRun {
+			return writeJSONResult(struct {
+				Mode  string `json:"mode"`
+				Error string `json:"error"`
+			}{
+				Mode:  "dry-run",
+				Error: err.Error(),
+			}, err)
+		}
+		return err
+	}
+
+	if initDryRun {
+		return dryRunInit(plan, initJSON)
+	}
+
+	terminal.Detected(filepath.Base(info.ProjectPath), info.Target)
+	printPreflightWarnings(report)
+	terminal.Info("`apus init` is best-effort and currently optimized for SwiftUI-style entry points.")
+	terminal.Info("A backup of modified files will be created before changes are applied.")
+
+	backup, err := createProjectBackup(projectDir, backupCandidates(info))
+	if err != nil {
+		return mutationError(fmt.Errorf("create backup: %w", err))
+	}
+	if backup.fileCount > 0 {
+		terminal.Info("Backup created: " + backup.dir)
+	}
+
+	var changes []terminal.FileChange
 	p := terminal.NewProgress(4)
+	needsPackageResolution := plan.CurrentDependencySource == "none"
 
 	// ── Step 1: Modify .pbxproj ──
 	{
+		pbxBefore := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
 		done := p.Start("Adding Apus to project.pbxproj")
-		err = xcode.AddApusDependency(info.ProjectPath, info.Target)
+		err = xcode.AddApusDependencyWithLocalPath(info.ProjectPath, info.Target, resolvedPackagePath)
 		done(err)
 		if err != nil {
 			terminal.Fatal("pbxproj modification failed", err)
-			return err
+			if rollbackErr := backup.restore(); rollbackErr != nil {
+				terminal.Info("Rollback failed: " + rollbackErr.Error())
+				return markPrinted(rollbackError(fmt.Errorf("pbxproj modification failed: %w", err)))
+			}
+			return markPrinted(mutationError(fmt.Errorf("pbxproj modification failed; backed-up files restored: %w", err)))
+		}
+		pbxAfter := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
+		if pbxAfter != pbxBefore {
+			changes = append(changes, terminal.FileChange{Action: "modified", File: "project.pbxproj", Detail: fmt.Sprintf("+%d bytes", pbxAfter-pbxBefore)})
 		}
 	}
 
 	// ── Step 2: Resolve package dependencies ──
 	{
 		done := p.Start("Resolving Swift Package dependencies")
-		err = builder.ResolvePackageDependencies(info.ProjectPath)
-		done(err)
-		if err != nil {
-			terminal.Fatal("package resolution failed", err)
-			terminal.Info("You can resolve manually: xcodebuild -resolvePackageDependencies")
-			// Non-fatal: user can open Xcode to resolve
+		if !needsPackageResolution {
+			done(nil)
+			terminal.Info("Apus package was already present; skipping package resolution.")
+		} else {
+			err = builder.ResolvePackageDependencies(info.ProjectPath)
+			done(err)
+			if err != nil {
+				terminal.Fatal("package resolution failed", err)
+				if rollbackErr := backup.restore(); rollbackErr != nil {
+					terminal.Info("Rollback failed: " + rollbackErr.Error())
+					return markPrinted(rollbackError(fmt.Errorf("package resolution failed: %w", err)))
+				}
+				return markPrinted(packageError(fmt.Errorf("package resolution failed; backed-up files restored (resolved packages may remain): %w", err)))
+			}
 		}
 	}
 
@@ -68,7 +186,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 		}
 		done := p.Start("Injecting Apus.shared.start() in " + entryLabel)
 		if info.EntryFile == "" {
-			integrated, checkErr := xcode.HasApusIntegration(cwd)
+			integrated, checkErr := xcode.HasApusIntegration(projectDir)
 			if checkErr != nil {
 				done(fmt.Errorf("no entry file detected"))
 				terminal.Info("Add `Apus.shared.start()` manually in your App init()")
@@ -81,11 +199,20 @@ func runInit(_ *cobra.Command, _ []string) error {
 				terminal.Info("Add `Apus.shared.start()` manually in your App init()")
 			}
 		} else {
+			entryBefore := countLines(info.EntryFile)
 			err = xcode.InjectApus(info.EntryFile)
 			done(err)
 			if err != nil {
 				terminal.Fatal("Swift injection failed", err)
-				return err
+				if rollbackErr := backup.restore(); rollbackErr != nil {
+					terminal.Info("Rollback failed: " + rollbackErr.Error())
+					return markPrinted(rollbackError(fmt.Errorf("swift injection failed: %w", err)))
+				}
+				return markPrinted(mutationError(fmt.Errorf("swift injection failed; backed-up files restored (resolved packages may remain): %w", err)))
+			}
+			entryAfter := countLines(info.EntryFile)
+			if entryAfter != entryBefore {
+				changes = append(changes, terminal.FileChange{Action: "modified", File: filepath.Base(info.EntryFile), Detail: fmt.Sprintf("+%d lines", entryAfter-entryBefore)})
 			}
 		}
 	}
@@ -93,19 +220,139 @@ func runInit(_ *cobra.Command, _ []string) error {
 	// ── Step 4: Write AGENTS.md ──
 	{
 		done := p.Start("Writing AGENTS.md")
-		err = writeAgentsMD(cwd, info)
+		err = writeAgentsMD(projectDir, info)
 		done(err)
 		if err != nil {
 			terminal.Fatal("AGENTS.md write failed", err)
 			// Non-fatal
+		} else {
+			if _, statErr := os.Stat(filepath.Join(projectDir, "AGENTS.md")); statErr == nil {
+				changes = append(changes, terminal.FileChange{Action: "created", File: "AGENTS.md", Detail: "MCP tool reference"})
+			}
 		}
 	}
 
+	terminal.Summary(changes)
 	terminal.InitSuccess(info.ProjectName)
 	return nil
 }
 
-const agentsMDTemplate = `# AGENTS.md — {{ .ProjectName }}
+func dryRunInit(plan initPlan, emitJSON bool) error {
+	if emitJSON {
+		return writeJSONResult(struct {
+			Mode string   `json:"mode"`
+			Plan initPlan `json:"plan"`
+		}{
+			Mode: "dry-run",
+			Plan: plan,
+		}, nil)
+	}
+
+	printInitPlan(plan)
+	return nil
+}
+
+type projectBackup struct {
+	dir       string
+	files     []backupFile
+	fileCount int
+}
+
+type backupFile struct {
+	original string
+	backup   string
+}
+
+func backupCandidates(info *xcode.ProjectInfo) []string {
+	files := []string{filepath.Join(info.ProjectPath, "project.pbxproj")}
+	if info.EntryFile != "" {
+		files = append(files, info.EntryFile)
+	}
+	return files
+}
+
+func createProjectBackup(cwd string, files []string) (*projectBackup, error) {
+	backupDir := filepath.Join(cwd, ".apus-backups", time.Now().Format("20060102-150405.000000000"))
+
+	entries := make([]backupFile, 0, len(files))
+	for i, original := range files {
+		if _, err := os.Stat(original); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("stat %s: %w", original, err)
+		}
+
+		if err := os.MkdirAll(backupDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create backup dir: %w", err)
+		}
+
+		backupPath := filepath.Join(backupDir, fmt.Sprintf("%02d_%s", i+1, filepath.Base(original)))
+		if err := copyFile(original, backupPath); err != nil {
+			return nil, fmt.Errorf("backup %s: %w", original, err)
+		}
+		entries = append(entries, backupFile{original: original, backup: backupPath})
+	}
+
+	return &projectBackup{
+		dir:       backupDir,
+		files:     entries,
+		fileCount: len(entries),
+	}, nil
+}
+
+func (b *projectBackup) restore() error {
+	var errs []error
+	for _, f := range b.files {
+		if err := copyFile(f.backup, f.original); err != nil {
+			errs = append(errs, fmt.Errorf("restore %s: %w", filepath.Base(f.original), err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+func readFileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+func countLines(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "\n")
+}
+
+const agentsMDTemplate = managedAgentsMarker + `
+
+# AGENTS.md — {{ .ProjectName }}
 
 ## MCP Server
 
@@ -115,7 +362,7 @@ Apus runs at ` + "`http://localhost:9847/mcp`" + ` when the app is running in th
 
 ` + "```bash" + `
 xcodebuild -scheme {{ .ProjectName }} \
-  -destination "platform=iOS Simulator,name=iPhone 16e" \
+  -destination "generic/platform=iOS Simulator" \
   -quiet CODE_SIGN_IDENTITY="-"
 ` + "```" + `
 
@@ -158,4 +405,29 @@ func writeAgentsMD(dir string, info *xcode.ProjectInfo) error {
 		BundleOrg:   strings.ToLower(info.ProjectName),
 	}
 	return tmpl.Execute(f, data)
+}
+
+func resolveInitPackagePath(rawPath string) (string, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", nil
+	}
+
+	if !filepath.IsAbs(path) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve package path: %w", err)
+		}
+		path = absolute
+	}
+
+	info, err := os.Stat(filepath.Join(path, "Package.swift"))
+	if err != nil {
+		return "", fmt.Errorf("invalid --package-path %q: Package.swift not found", rawPath)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("invalid --package-path %q: Package.swift is a directory", rawPath)
+	}
+
+	return path, nil
 }

@@ -8,7 +8,7 @@ import Apus
 struct {{ .AppName }}App: App {
     init() {
         #if DEBUG
-        Apus.shared.start(interceptNetwork: true)
+        Apus.shared.start(port: {{ .MCPPort }}, interceptNetwork: true)
         #endif
     }
 

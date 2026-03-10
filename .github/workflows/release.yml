@@ -29,14 +29,23 @@ jobs:
         with:
           go-version: "1.22"
 
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Build fixture runner
+        run: go build -o .tmp/bin/fixturerunner ./tools/fixturerunner
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          go build -ldflags="-s -w -X github.com/ivanhoe/apus-cli/cmd.version=${GITHUB_REF_NAME}" \
+          go build -ldflags="-s -w -X github.com/ivanhoe/apus_cli/cmd.version=${GITHUB_REF_NAME}" \
             -o apus .
+
+      - name: Smoke test release binary
+        run: ./scripts/release-smoke.sh ./apus
 
       - name: Create tarball
         run: |
@@ -76,3 +85,44 @@ jobs:
             dist/checksums.txt
           generate_release_notes: true
           draft: false
+
+  homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute SHA256 sums
+        id: sha
+        run: |
+          ARM64_SHA=$(sha256sum dist/apus_${GITHUB_REF_NAME}_darwin_arm64.tar.gz | awk '{print $1}')
+          AMD64_SHA=$(sha256sum dist/apus_${GITHUB_REF_NAME}_darwin_amd64.tar.gz | awk '{print $1}')
+          echo "arm64=${ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "amd64=${AMD64_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Generate formula
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -e "s/VERSION/${VERSION}/g" \
+              -e "s/SHA256_ARM64/${{ steps.sha.outputs.arm64 }}/g" \
+              -e "s/SHA256_AMD64/${{ steps.sha.outputs.amd64 }}/g" \
+              scripts/homebrew-formula.rb > apus.rb
+          cat apus.rb
+
+      - name: Push to homebrew-tap
+        uses: dmnemec/copy_file_to_another_repo_action@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          source_file: apus.rb
+          destination_repo: ivanhoe/homebrew-tap
+          destination_folder: Formula
+          user_email: github-actions[bot]@users.noreply.github.com
+          user_name: github-actions[bot]
+          commit_message: "apus ${{ github.ref_name }}"

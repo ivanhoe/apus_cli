@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "fixtures": [
+    {
+      "id": "swiftui-single-target",
+      "display_name": "SwiftUI single target app",
+      "stage": "ready",
+      "source_kind": "synthetic",
+      "expected_outcome": "supported",
+      "path": "synthetic/swiftui-single-target",
+      "notes": "Baseline fixture for init/remove/status roundtrip on a standard SwiftUI app."
+    },
+    {
+      "id": "uikit-appdelegate",
+      "display_name": "UIKit AppDelegate app",
+      "stage": "ready",
+      "source_kind": "synthetic",
+      "expected_outcome": "supported",
+      "path": "synthetic/uikit-appdelegate",
+      "notes": "Covers UIApplicationMain/AppDelegate style entry points and non-SwiftUI injection paths."
+    },
+    {
+      "id": "multi-target-app",
+      "display_name": "Multi-target app workspace",
+      "stage": "ready",
+      "source_kind": "synthetic",
+      "expected_outcome": "supported-with-target",
+      "target_required": true,
+      "target": "FixturePrimaryApp",
+      "path": "synthetic/multi-target-app",
+      "notes": "Should require --target and fail cleanly if the user does not specify one."
+    },
+    {
+      "id": "app-plus-widget",
+      "display_name": "App with widget extension",
+      "stage": "ready",
+      "source_kind": "synthetic",
+      "expected_outcome": "supported-with-target",
+      "target_required": true,
+      "target": "FixtureWidgetHostApp",
+      "path": "synthetic/app-plus-widget",
+      "notes": "Protects target detection and entry-point selection when widget bundles are present."
+    },
+    {
+      "id": "existing-spm-dependencies",
+      "display_name": "Project with existing SPM graph",
+      "stage": "ready",
+      "source_kind": "synthetic",
+      "expected_outcome": "supported",
+      "path": "synthetic/existing-spm-dependencies",
+      "notes": "Verifies pbxproj surgery stays stable when the project already contains package references."
+    },
+    {
+      "id": "nonstandard-layout",
+      "display_name": "Non-standard project root layout",
+      "stage": "ready",
+      "source_kind": "synthetic",
+      "expected_outcome": "unsupported-cleanly",
+      "path": "synthetic/nonstandard-layout",
+      "notes": "Success means a clean failure with no writes when detection cannot safely locate the supported app entry."
+    },
+    {
+      "id": "open-source-swiftui-real",
+      "display_name": "Open-source SwiftUI single-target app",
+      "stage": "ready",
+      "source_kind": "external",
+      "expected_outcome": "supported",
+      "repo": "https://github.com/nalexn/clean-architecture-swiftui.git",
+      "ref": "9eca97b8cfff96a14084b564b1fefd949c93d232",
+      "notes": "Real-world SwiftUI app with an existing package graph and a single primary app target."
+    },
+    {
+      "id": "open-source-multi-target-real",
+      "display_name": "Open-source multi-target SwiftUI app",
+      "stage": "ready",
+      "source_kind": "external",
+      "expected_outcome": "supported-with-target",
+      "target_required": true,
+      "target": "Fruta iOS",
+      "repo": "https://github.com/apple-sample-code/FrutaBuildingAFeatureRichAppWithSwiftUI.git",
+      "ref": "dc9af9a5fb5dfe334630aab727fa2369f442c7f2",
+      "notes": "Real repo with app, widget, App Clip, and macOS targets. Requires --target to stay deterministic."
+    }
+  ]
+}

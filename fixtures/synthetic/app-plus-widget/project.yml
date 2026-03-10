@@ -1,0 +1,37 @@
+name: FixtureAppPlusWidget
+options:
+  bundleIdPrefix: dev.fixture
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+targets:
+  FixtureWidgetHostApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: SharedSources
+      - path: AppSources
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.fixture.fixturewidgethostapp
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+
+  FixtureWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WidgetSources
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.fixture.fixturewidgets
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"

@@ -40,7 +40,7 @@ func TestFindEntryPoint_FindsMainFile(t *testing.T) {
 		t.Fatalf("write file: %v", err)
 	}
 
-	path, isSwiftUI, err := findEntryPoint(tmp)
+	path, isSwiftUI, err := findEntryPoint(tmp, "MyApp")
 	if err != nil {
 		t.Fatalf("findEntryPoint() error: %v", err)
 	}
@@ -49,5 +49,37 @@ func TestFindEntryPoint_FindsMainFile(t *testing.T) {
 	}
 	if !isSwiftUI {
 		t.Fatalf("expected isSwiftUI=true")
+	}
+}
+
+func TestFindEntryPoint_PrefersTargetOverWidgetMain(t *testing.T) {
+	tmp := t.TempDir()
+
+	widgetDir := filepath.Join(tmp, "Widgets")
+	if err := os.MkdirAll(widgetDir, 0o755); err != nil {
+		t.Fatalf("mkdir widget dir: %v", err)
+	}
+	widgetFile := filepath.Join(widgetDir, "WidgetsBundle.swift")
+	widgetSrc := "import SwiftUI\n\n@main\nstruct WidgetsBundle: WidgetBundle { var body: some Widget { EmptyWidget() } }\n"
+	if err := os.WriteFile(widgetFile, []byte(widgetSrc), 0o644); err != nil {
+		t.Fatalf("write widget file: %v", err)
+	}
+
+	appDir := filepath.Join(tmp, "MyApp", "App", "Main")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatalf("mkdir app dir: %v", err)
+	}
+	appFile := filepath.Join(appDir, "MyApp.swift")
+	appSrc := "import SwiftUI\n\n@main\nstruct MyApp: App { var body: some Scene { WindowGroup { Text(\"Hi\") } } }\n"
+	if err := os.WriteFile(appFile, []byte(appSrc), 0o644); err != nil {
+		t.Fatalf("write app file: %v", err)
+	}
+
+	path, _, err := findEntryPoint(tmp, "MyApp")
+	if err != nil {
+		t.Fatalf("findEntryPoint() error: %v", err)
+	}
+	if path != appFile {
+		t.Fatalf("findEntryPoint() path = %q, want %q", path, appFile)
 	}
 }

@@ -91,3 +91,43 @@ git tag v0.x.0 && git push --tags
 
 The CLI integrates with Apus which runs at `http://localhost:9847/mcp` inside the target iOS app.
 Key tools: `get_logs`, `get_screenshot`, `get_view_hierarchy`, `ui_interact`, `get_network_history`, `hot_reload`.
+
+## Working Memory (2026-03-04)
+
+### Context from this session
+
+- Main incident: `apus init` repeatedly failed at step `[2/4]` on an external app (`IceCubesApp`) with `xcodebuild -resolvePackageDependencies` exit status `74` and unresolved package graph for `https://github.com/ivanhoe/apus`.
+- Symptoms included intermittent `xcodebuild -list: exit status 74` during project detection and repeated logs with `DVTBuildVersion` warnings.
+- Repository was renamed from `apus-cli` to `apus_cli` and synced to `https://github.com/ivanhoe/apus_cli`.
+
+### Fixes implemented in this repo
+
+- Release/version wiring:
+  - `cmd/root.go`: `version` changed from `const` to `var` for `-ldflags -X` injection.
+  - `.github/workflows/release.yml`: ldflags module path updated to `github.com/ivanhoe/apus_cli/cmd.version`.
+- `apus init` behavior:
+  - If package resolution fails, command now returns non-zero (no false success).
+  - Best-effort messaging + preflight checks + backup/restore path were added.
+- Entry-point detection:
+  - `internal/xcode/detect.go` now chooses `@main` file using target-aware scoring (prefers app target over widget/extension candidates).
+- PBX project idempotency:
+  - `internal/xcode/pbxproj.go` now ensures full Apus wiring even when repo URL already exists:
+    - package reference link
+    - package product dependency link
+    - frameworks build file link
+  - Handles legacy and local-reference normalization paths more robustly.
+- Test coverage additions:
+  - target-aware entrypoint tests (`detect_test.go`)
+  - idempotent/wiring tests for pbxproj (`pbxproj_test.go`)
+  - preflight/scaffold tests were added for new command behavior.
+
+### Current status
+
+- Validation run in this workspace:
+  - `go test ./...` passes
+  - `go vet ./...` passes
+- Global binary `/usr/local/bin/apus` was rebuilt and reinstalled from this repo.
+
+### Known risks / review notes
+
+- Rollback messaging in `cmd/init.go` can overstate what is restored (backup scope is limited to selected files).

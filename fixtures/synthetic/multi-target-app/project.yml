@@ -1,0 +1,38 @@
+name: FixtureMultiTargetApp
+options:
+  bundleIdPrefix: dev.fixture
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+targets:
+  FixturePrimaryApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: SharedSources
+      - path: PrimaryApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.fixture.fixtureprimaryapp
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+
+  FixtureSecondaryApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: SharedSources
+      - path: SecondaryApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.fixture.fixturesecondaryapp
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"

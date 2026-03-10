@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -22,8 +23,14 @@ type ProjectInfo struct {
 }
 
 // DetectProject walks the current directory (depth 1) to find an Xcode project,
-// then resolves targets and locates the SwiftUI entry point.
+// then resolves targets and locates the app entry point for the selected target.
 func DetectProject(dir string) (*ProjectInfo, error) {
+	return DetectProjectWithTarget(dir, "")
+}
+
+// DetectProjectWithTarget walks the current directory (depth 1) to find an Xcode
+// project, then resolves targets and locates the app entry point for the selected target.
+func DetectProjectWithTarget(dir, preferredTarget string) (*ProjectInfo, error) {
 	projPath, err := findXcodeProj(dir)
 	if err != nil {
 		return nil, err
@@ -31,7 +38,7 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 
 	projectName := strings.TrimSuffix(filepath.Base(projPath), ".xcodeproj")
 
-	target, err := pickTarget(projPath)
+	target, err := pickTarget(projPath, preferredTarget)
 	if err != nil {
 		return nil, err
 	}
@@ -42,8 +49,8 @@ func DetectProject(dir string) (*ProjectInfo, error) {
 		Target:      target,
 	}
 
-	// Find Swift entry point (file with @main)
-	entryFile, isSwiftUI, err := findEntryPoint(dir)
+	// Find the entry-point file for the selected target
+	entryFile, isSwiftUI, err := findEntryPoint(dir, target)
 	if err != nil {
 		// Non-fatal: inject may still work heuristically
 		_ = err
@@ -99,7 +106,7 @@ type xcodebuildList struct {
 }
 
 // pickTarget returns the primary app target (excludes *Tests, *UITests, *Extension*).
-func pickTarget(projPath string) (string, error) {
+func pickTarget(projPath string, preferredTarget string) (string, error) {
 	projectDir := filepath.Dir(projPath)
 	projectFile := filepath.Base(projPath)
 
@@ -112,7 +119,7 @@ func pickTarget(projPath string) (string, error) {
 	if err == nil {
 		var list xcodebuildList
 		if parseErr := json.Unmarshal(out, &list); parseErr == nil {
-			return chooseAppTarget(list.Project.Targets, projPath)
+			return chooseAppTarget(list.Project.Targets, projPath, preferredTarget)
 		}
 	}
 
@@ -120,7 +127,7 @@ func pickTarget(projPath string) (string, error) {
 	// is unavailable or fails due local Xcode environment issues.
 	pbxTargets, pbxErr := listTargetsFromPBXProj(projPath)
 	if pbxErr == nil {
-		return chooseAppTarget(pbxTargets, projPath)
+		return chooseAppTarget(pbxTargets, projPath, preferredTarget)
 	}
 
 	xcodeErr := formatXcodebuildListError(err, stderr.String())
@@ -130,21 +137,34 @@ func pickTarget(projPath string) (string, error) {
 	return "", fmt.Errorf("%s\npbxproj fallback failed: %v", xcodeErr, pbxErr)
 }
 
-func chooseAppTarget(targets []string, projPath string) (string, error) {
+func chooseAppTarget(targets []string, projPath string, preferredTarget string) (string, error) {
 	appTargets := filterAppTargets(targets)
 	if len(appTargets) == 0 {
 		return "", fmt.Errorf("no app target found in project — targets: %v", targets)
 	}
-	if len(appTargets) > 1 {
-		// Prefer the one matching the project name
-		projectName := strings.TrimSuffix(filepath.Base(projPath), ".xcodeproj")
+
+	if preferredTarget != "" {
 		for _, t := range appTargets {
-			if t == projectName {
+			if t == preferredTarget {
 				return t, nil
 			}
 		}
+		return "", fmt.Errorf("target %q not found — app targets: %s", preferredTarget, strings.Join(appTargets, ", "))
 	}
-	return appTargets[0], nil
+
+	if len(appTargets) == 1 {
+		return appTargets[0], nil
+	}
+
+	// Prefer the one matching the project name
+	projectName := strings.TrimSuffix(filepath.Base(projPath), ".xcodeproj")
+	for _, t := range appTargets {
+		if t == projectName {
+			return t, nil
+		}
+	}
+
+	return "", fmt.Errorf("multiple app targets found in %s: %s — rerun with --target <name>", filepath.Base(projPath), strings.Join(appTargets, ", "))
 }
 
 func filterAppTargets(targets []string) []string {
@@ -210,18 +230,31 @@ func listTargetsFromPBXProj(projPath string) ([]string, error) {
 	return targets, nil
 }
 
-// findEntryPoint walks swift files looking for @main + App protocol.
-func findEntryPoint(dir string) (path string, isSwiftUI bool, err error) {
+type entryPointCandidate struct {
+	path      string
+	isSwiftUI bool
+	score     int
+}
+
+// findEntryPoint walks swift files looking for @main-like entry points and picks
+// the candidate that best matches the selected target.
+func findEntryPoint(dir, target string) (path string, isSwiftUI bool, err error) {
+	candidates := make([]entryPointCandidate, 0, 4)
+
 	err = filepath.Walk(dir, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return nil // skip unreadable dirs
 		}
-		// Skip build artifacts and hidden dirs
+
 		base := filepath.Base(p)
-		if base == ".build" || base == "DerivedData" || strings.HasPrefix(base, ".") {
-			return filepath.SkipDir
+		if info.IsDir() {
+			if base == ".build" || base == "DerivedData" || strings.HasPrefix(base, ".") {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		if info.IsDir() || !strings.HasSuffix(p, ".swift") {
+
+		if !strings.HasSuffix(p, ".swift") {
 			return nil
 		}
 
@@ -230,22 +263,72 @@ func findEntryPoint(dir string) (path string, isSwiftUI bool, err error) {
 			return nil
 		}
 		s := string(content)
-		if hasMainAttribute(s) {
-			if strings.Contains(s, ": App") || strings.Contains(s, ":App") {
-				isSwiftUI = true
-			}
-			path = p
-			return filepath.SkipAll
+		if !hasMainAttribute(s) {
+			return nil
 		}
+
+		swiftUI := strings.Contains(s, ": App") || strings.Contains(s, ":App")
+		candidates = append(candidates, entryPointCandidate{
+			path:      p,
+			isSwiftUI: swiftUI,
+			score:     entryPointScore(p, s, target),
+		})
 		return nil
 	})
-	if err == filepath.SkipAll {
-		err = nil
+	if err != nil {
+		return "", false, err
 	}
-	if path == "" && err == nil {
-		err = fmt.Errorf("no @main Swift file found in %s", dir)
+
+	if len(candidates) == 0 {
+		return "", false, fmt.Errorf("no @main Swift file found in %s", dir)
 	}
-	return
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			if candidates[i].isSwiftUI != candidates[j].isSwiftUI {
+				return candidates[i].isSwiftUI
+			}
+			return len(candidates[i].path) < len(candidates[j].path)
+		}
+		return candidates[i].score > candidates[j].score
+	})
+
+	best := candidates[0]
+	return best.path, best.isSwiftUI, nil
+}
+
+func entryPointScore(path, src, target string) int {
+	score := 0
+	pathLower := strings.ToLower(filepath.ToSlash(path))
+	targetLower := strings.ToLower(target)
+	baseLower := strings.ToLower(filepath.Base(path))
+
+	if targetLower != "" {
+		if strings.Contains(pathLower, targetLower) {
+			score += 80
+		}
+		if baseLower == targetLower+".swift" || baseLower == targetLower+"app.swift" {
+			score += 120
+		}
+		if strings.Contains(src, "struct "+target) || strings.Contains(src, "class "+target) {
+			score += 60
+		}
+	}
+
+	if strings.Contains(src, ": App") || strings.Contains(src, ":App") {
+		score += 20
+	}
+	if strings.Contains(pathLower, "/app/main/") || strings.Contains(pathLower, "/app/") {
+		score += 15
+	}
+	if strings.Contains(pathLower, "widget") && !strings.Contains(targetLower, "widget") {
+		score -= 70
+	}
+	if strings.Contains(pathLower, "extension") && !strings.Contains(targetLower, "extension") {
+		score -= 40
+	}
+
+	return score
 }
 
 func hasMainAttribute(src string) bool {

@@ -184,21 +184,21 @@ Start here:
 
 Start with the support matrix before trying `apus init` on a new repo shape:
 
-<<<<<<< HEAD
 - [Support matrix](./docs/support-matrix.md)
 - [Troubleshooting](./docs/troubleshooting.md)
 
 The current validation corpus lives in [`fixtures/matrix.json`](./fixtures/matrix.json) and includes both synthetic fixtures and pinned open-source repos.
 
+## How It Works
+
+1. `apus new` or `apus init` prepares the project for Apus.
+2. You build and run the app in the simulator.
+3. Apus serves MCP over `http://localhost:9847/mcp` by default.
+4. Your AI agent connects there to inspect logs, network, views, screenshots, and hot-reload changes.
+
 ## For Maintainers
 
 Contributor and release workflow docs live in [CONTRIBUTING.md](./CONTRIBUTING.md).
-=======
-1. **First time**: `apus new` or `apus init` sets up your project (requires Xcode installed)
-2. **After that**: build and run from any editor or CLI -- no need to keep Xcode open
-3. Apus MCP server runs at `http://localhost:9847/mcp` inside the simulator by default
-4. Your AI agent connects to inspect logs, network, views, take screenshots, and hot-reload Swift code
->>>>>>> 9e5e440 (fix: address CodeRabbit review follow-ups)
 
 ## License
 

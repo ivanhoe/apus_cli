@@ -20,10 +20,16 @@ var newCmd = &cobra.Command{
 	RunE:  runNew,
 }
 
-var newTemplate string
+var (
+	newTemplate string
+	mcpPort     int
+)
+
+const defaultMCPPort = 9847
 
 func init() {
 	newCmd.Flags().StringVar(&newTemplate, "template", "swiftui", "project template to use (currently only: swiftui)")
+	newCmd.Flags().IntVar(&mcpPort, "port", defaultMCPPort, "MCP server port to poll for health check")
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
@@ -139,16 +145,17 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// ── Step 6: MCP health check ──
 	{
 		done := p.Start("Waiting for MCP server")
-		err = simulator.WaitForMCPReady("http://127.0.0.1:9847/", 30*time.Second)
+		mcpURL := fmt.Sprintf("http://127.0.0.1:%d/", mcpPort)
+		err = simulator.WaitForMCPReady(mcpURL, 30*time.Second)
 		done(err)
 		if err != nil {
 			terminal.Fatal("MCP health check failed", err)
-			terminal.Info("The app was launched, but MCP did not respond on port 9847 in time.")
-			terminal.Info("Try running the app again and confirm no other simulator app is using port 9847.")
+			terminal.Info(fmt.Sprintf("The app was launched, but MCP did not respond on port %d in time.", mcpPort))
+			terminal.Info(fmt.Sprintf("Try running the app again and confirm no other simulator app is using port %d.", mcpPort))
 			return err
 		}
 	}
 
-	terminal.Success(appName, sim.Name, "http://localhost:9847/mcp")
+	terminal.Success(appName, sim.Name, fmt.Sprintf("http://localhost:%d/mcp", mcpPort))
 	return nil
 }

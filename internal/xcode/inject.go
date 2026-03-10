@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -132,21 +133,18 @@ func injectStart(src string) (string, error) {
 	return src[:bodyIdx] + initBlock + src[bodyIdx:], nil
 }
 
-// findInit returns the byte index of "init()" in src, or -1.
+// initPattern matches `init()` declarations with any indentation (spaces or tabs),
+// optional `override` keyword, and optional spacing before the opening brace.
+// It avoids matching `init(param:)` (init with parameters) or `deinit`.
+var initPattern = regexp.MustCompile(`(?m)^[ \t]+(override[ \t]+)?init\(\)[ \t]*\{`)
+
+// findInit returns the byte index of an `init()` declaration in src, or -1.
 func findInit(src string) int {
-	// Look for `init()` or `init() {` (possibly with whitespace)
-	patterns := []string{
-		"\n    init() {",
-		"\n    init(){",
-		"\n        init() {",
-		"\n    override init() {",
+	loc := initPattern.FindStringIndex(src)
+	if loc == nil {
+		return -1
 	}
-	for _, p := range patterns {
-		if idx := strings.Index(src, p); idx != -1 {
-			return idx
-		}
-	}
-	return -1
+	return loc[0]
 }
 
 // insertAfterInitBrace inserts the Apus start call as first line inside the init() body.

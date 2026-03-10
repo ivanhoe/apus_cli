@@ -153,7 +153,7 @@ func backupCandidates(info *xcode.ProjectInfo) []string {
 }
 
 func createProjectBackup(cwd string, files []string) (*projectBackup, error) {
-	backupDir := filepath.Join(cwd, ".apus-backups", time.Now().Format("20060102-150405"))
+	backupDir := filepath.Join(cwd, ".apus-backups", time.Now().Format("20060102-150405.000000000"))
 
 	entries := make([]backupFile, 0, len(files))
 	for i, original := range files {

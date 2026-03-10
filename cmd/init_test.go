@@ -148,6 +148,108 @@ func TestCopyFile_SrcMissing(t *testing.T) {
 	}
 }
 
+func TestBackupDirHasNanosecondPrecision(t *testing.T) {
+	dir := t.TempDir()
+
+	file := filepath.Join(dir, "test.txt")
+	os.WriteFile(file, []byte("content"), 0o644)
+
+	b1, err := createProjectBackup(dir, []string{file})
+	if err != nil {
+		t.Fatalf("first backup error: %v", err)
+	}
+
+	b2, err := createProjectBackup(dir, []string{file})
+	if err != nil {
+		t.Fatalf("second backup error: %v", err)
+	}
+
+	// With nanosecond precision, two rapid backups should have different dirs
+	if b1.fileCount > 0 && b2.fileCount > 0 && b1.dir == b2.dir {
+		t.Fatalf("backup dirs should differ with nanosecond precision, both: %s", b1.dir)
+	}
+}
+
+func TestInitInjectFlow(t *testing.T) {
+	// Integration-style test: simulate the inject step of apus init
+	// using a realistic Swift file structure
+	dir := t.TempDir()
+
+	entryFile := filepath.Join(dir, "MyApp.swift")
+	original := `import SwiftUI
+
+@main
+struct MyApp: App {
+	var body: some Scene {
+		WindowGroup {
+			ContentView()
+		}
+	}
+}
+`
+	os.WriteFile(entryFile, []byte(original), 0o644)
+
+	// Back up
+	backup, err := createProjectBackup(dir, []string{entryFile})
+	if err != nil {
+		t.Fatalf("backup error: %v", err)
+	}
+
+	// Inject
+	if err := xcode.InjectApus(entryFile); err != nil {
+		t.Fatalf("InjectApus error: %v", err)
+	}
+
+	// Verify injection
+	data, _ := os.ReadFile(entryFile)
+	src := string(data)
+	if !strings.Contains(src, "import Apus") {
+		t.Fatalf("expected import Apus after inject")
+	}
+	if !strings.Contains(src, "Apus.shared.start(") {
+		t.Fatalf("expected Apus.shared.start() after inject")
+	}
+
+	// Verify idempotency
+	if err := xcode.InjectApus(entryFile); err != nil {
+		t.Fatalf("second InjectApus error: %v", err)
+	}
+	data2, _ := os.ReadFile(entryFile)
+	if string(data2) != src {
+		t.Fatalf("InjectApus should be idempotent on second call")
+	}
+
+	// Verify rollback restores original
+	if err := backup.restore(); err != nil {
+		t.Fatalf("restore error: %v", err)
+	}
+	data3, _ := os.ReadFile(entryFile)
+	if string(data3) != original {
+		t.Fatalf("restore should recover original content")
+	}
+}
+
+func TestInitInjectFlow_TabIndented(t *testing.T) {
+	dir := t.TempDir()
+
+	entryFile := filepath.Join(dir, "MyApp.swift")
+	content := "import SwiftUI\n\n@main\nstruct MyApp: App {\n\tinit() {\n\t\tprint(\"setup\")\n\t}\n\tvar body: some Scene {\n\t\tWindowGroup { ContentView() }\n\t}\n}\n"
+	os.WriteFile(entryFile, []byte(content), 0o644)
+
+	if err := xcode.InjectApus(entryFile); err != nil {
+		t.Fatalf("InjectApus with tabs error: %v", err)
+	}
+
+	data, _ := os.ReadFile(entryFile)
+	src := string(data)
+	if !strings.Contains(src, "import Apus") {
+		t.Fatalf("expected import Apus with tab-indented file")
+	}
+	if !strings.Contains(src, "Apus.shared.start(") {
+		t.Fatalf("expected Apus.shared.start() with tab-indented file")
+	}
+}
+
 func TestBackupCandidates(t *testing.T) {
 	t.Run("with entry file", func(t *testing.T) {
 		info := &xcode.ProjectInfo{

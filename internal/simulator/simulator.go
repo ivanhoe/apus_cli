@@ -280,6 +280,7 @@ func waitForHTTPReady(url string, timeout, interval time.Duration) error {
 
 		resp, err := client.Do(req)
 		if err == nil {
+			// Drain body to allow connection reuse; errors are harmless in a poll loop.
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 

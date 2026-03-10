@@ -1,0 +1,67 @@
+# apus
+
+CLI to integrate [Apus](https://github.com/ivanhoe/apus) into iOS projects. Apus embeds an MCP debug server in your app so AI agents (Claude Code, Cursor, Copilot) can inspect and manipulate it at runtime.
+
+## Install
+
+```bash
+# Homebrew (coming soon)
+brew install ivanhoe/tap/apus
+
+# Or download the binary
+curl -fsSL https://raw.githubusercontent.com/ivanhoe/apus_cli/main/scripts/install.sh | bash
+
+# Or build from source
+go install github.com/ivanhoe/apus_cli@latest
+```
+
+## Commands
+
+### `apus doctor`
+
+Verify your local toolchain (Xcode, xcodebuild, xcodegen, etc.).
+
+```bash
+apus doctor
+```
+
+### `apus new <AppName>`
+
+Create a new SwiftUI project with Apus pre-integrated, build it, launch it in the simulator, and verify MCP connectivity.
+
+```bash
+apus new MyApp
+apus new MyApp --port 9999   # custom MCP port for health check
+```
+
+### `apus init`
+
+Best-effort integration of Apus into an existing Xcode project. Backs up modified files before making changes.
+
+```bash
+cd /path/to/your/project
+apus init
+```
+
+This will:
+1. Add Apus as a Swift Package dependency in `.pbxproj`
+2. Resolve package dependencies
+3. Inject `Apus.shared.start()` in your app entry point
+4. Write an `AGENTS.md` with MCP tool reference
+
+## Requirements
+
+- macOS
+- Xcode 15+ with command line tools (`xcode-select --install`)
+- [xcodegen](https://github.com/yonaskolb/XcodeGen) (for `apus new`)
+
+## How it works
+
+1. **First time**: `apus new` or `apus init` sets up your project (requires Xcode installed)
+2. **After that**: build and run from any editor or CLI -- no need to keep Xcode open
+3. Apus MCP server runs at `http://localhost:9847/mcp` inside the simulator
+4. Your AI agent connects to inspect logs, network, views, take screenshots, and hot-reload Swift code
+
+## License
+
+Apache 2.0

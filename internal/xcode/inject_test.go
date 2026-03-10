@@ -232,10 +232,16 @@ func TestFindInit(t *testing.T) {
 		src  string
 		want bool
 	}{
-		{"standard init", "\n    init() {\n        print(\"hi\")\n    }", true},
-		{"no space init", "\n    init(){\n        print(\"hi\")\n    }", true},
+		{"4-space indent", "\n    init() {\n        print(\"hi\")\n    }", true},
+		{"8-space indent", "\n        init() {\n        print(\"hi\")\n    }", true},
+		{"tab indent", "\n\tinit() {\n\t\tprint(\"hi\")\n\t}", true},
+		{"mixed tabs spaces", "\n\t  init() {\n\t\tprint(\"hi\")\n\t}", true},
+		{"no space before brace", "\n    init(){\n        print(\"hi\")\n    }", true},
 		{"override init", "\n    override init() {\n        print(\"hi\")\n    }", true},
+		{"override tab init", "\n\toverride\tinit() {\n\t\tprint(\"hi\")\n\t}", true},
 		{"no init", "struct App {\n    var body: some Scene {}\n}", false},
+		{"init with params", "\n    init(name: String) {\n    }", false},
+		{"deinit", "\n    deinit {\n    }", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

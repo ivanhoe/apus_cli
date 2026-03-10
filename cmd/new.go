@@ -115,11 +115,6 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = simulator.ShutdownOtherBootedDevices(sim.UDID); err != nil {
 			terminal.Info("warning: could not shut down other booted simulators; MCP port may conflict")
 		}
-		if err = simulator.Shutdown(sim.UDID); err != nil {
-			done(err)
-			terminal.Fatal("simulator restart failed", err)
-			return err
-		}
 		if err = simulator.Boot(sim.UDID); err != nil {
 			done(err)
 			terminal.Fatal("simulator boot failed", err)

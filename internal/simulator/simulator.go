@@ -26,6 +26,7 @@ const (
 )
 
 var runSimctlFn = runSimctl
+var deviceStateFn = deviceState
 
 // Device represents a simulator device.
 type Device struct {
@@ -90,7 +91,7 @@ func PickBestDevice() (Device, error) {
 
 // Boot boots the simulator if not already booted.
 func Boot(udid string) error {
-	state, err := deviceState(udid)
+	state, err := deviceStateFn(udid)
 	if err != nil {
 		return err
 	}
@@ -99,13 +100,17 @@ func Boot(udid string) error {
 	}
 
 	if out, err := runSimctlFn(simctlBootTimeout, nil, "boot", udid); err != nil {
+		// Handle race: state changed to Booted between our check and the boot call
+		if strings.Contains(out, "current state: Booted") {
+			return nil
+		}
 		return fmt.Errorf("simctl boot: %w\n%s", err, out)
 	}
 
 	// Wait until booted (up to 60s)
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if s, _ := deviceState(udid); s == "Booted" {
+		if s, _ := deviceStateFn(udid); s == "Booted" {
 			return nil
 		}
 		time.Sleep(2 * time.Second)
@@ -115,7 +120,7 @@ func Boot(udid string) error {
 
 // Shutdown stops a simulator if it's currently booted.
 func Shutdown(udid string) error {
-	state, err := deviceState(udid)
+	state, err := deviceStateFn(udid)
 	if err != nil {
 		return err
 	}

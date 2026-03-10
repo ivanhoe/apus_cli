@@ -117,6 +117,70 @@ func TestLooksLikeNotInstalled(t *testing.T) {
 	}
 }
 
+func TestBoot_AlreadyBootedIsSuccess(t *testing.T) {
+	origState := deviceStateFn
+	origRun := runSimctlFn
+	t.Cleanup(func() { deviceStateFn = origState; runSimctlFn = origRun })
+
+	// deviceState returns "Shutting Down" — Boot will attempt simctl boot
+	deviceStateFn = func(udid string) (string, error) {
+		return "Shutting Down", nil
+	}
+	// simctl boot fails with "already Booted" race condition error
+	runSimctlFn = func(timeout time.Duration, env map[string]string, args ...string) (string, error) {
+		return "An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405):\nUnable to boot device in current state: Booted", errors.New("exit status 149")
+	}
+
+	err := Boot("TEST-UDID")
+	if err != nil {
+		t.Fatalf("Boot() should succeed when device is already Booted, got: %v", err)
+	}
+}
+
+func TestBoot_SkipsWhenAlreadyBooted(t *testing.T) {
+	origState := deviceStateFn
+	origRun := runSimctlFn
+	t.Cleanup(func() { deviceStateFn = origState; runSimctlFn = origRun })
+
+	deviceStateFn = func(udid string) (string, error) {
+		return "Booted", nil
+	}
+	bootCalled := false
+	runSimctlFn = func(timeout time.Duration, env map[string]string, args ...string) (string, error) {
+		bootCalled = true
+		return "", nil
+	}
+
+	err := Boot("TEST-UDID")
+	if err != nil {
+		t.Fatalf("Boot() should succeed, got: %v", err)
+	}
+	if bootCalled {
+		t.Fatalf("Boot() should not call simctl boot when already Booted")
+	}
+}
+
+func TestBoot_RealBootError(t *testing.T) {
+	origState := deviceStateFn
+	origRun := runSimctlFn
+	t.Cleanup(func() { deviceStateFn = origState; runSimctlFn = origRun })
+
+	deviceStateFn = func(udid string) (string, error) {
+		return "Shutdown", nil
+	}
+	runSimctlFn = func(timeout time.Duration, env map[string]string, args ...string) (string, error) {
+		return "Unable to boot device in current state: Creating", errors.New("exit status 149")
+	}
+
+	err := Boot("TEST-UDID")
+	if err == nil {
+		t.Fatalf("Boot() should fail for non-Booted state errors")
+	}
+	if !strings.Contains(err.Error(), "simctl boot") {
+		t.Fatalf("expected simctl boot error, got: %v", err)
+	}
+}
+
 func TestWaitForHTTPReady_SucceedsOnHealthyEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

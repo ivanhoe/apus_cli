@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/ivanhoe/apus_cli/internal/terminal"
 	"github.com/ivanhoe/apus_cli/internal/xcode"
 	"github.com/spf13/cobra"
 )
+
+var statusTarget string
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
@@ -18,29 +19,33 @@ var statusCmd = &cobra.Command{
 	RunE:  runStatus,
 }
 
+func init() {
+	statusCmd.Flags().StringVar(&statusTarget, "target", "", "App target to inspect when the project contains multiple app targets")
+}
+
 func runStatus(_ *cobra.Command, _ []string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
 	}
 
-	info, err := xcode.DetectProject(cwd)
+	info, err := xcode.DetectProjectWithTarget(cwd, statusTarget)
 	if err != nil {
 		terminal.Fatal("project detection failed", err)
-		return err
+		return markPrinted(err)
 	}
 
 	terminal.Detected(filepath.Base(info.ProjectPath), info.Target)
 
-	pbxPath := filepath.Join(info.ProjectPath, "project.pbxproj")
-	pbxRaw, _ := os.ReadFile(pbxPath)
-	pbxHasApus := strings.Contains(string(pbxRaw), "github.com/ivanhoe/apus")
+	dependencyState, depErr := xcode.DetectApusDependency(info.ProjectPath)
+	if depErr != nil {
+		return depErr
+	}
+	pbxHasApus := dependencyState.Any()
 
 	hasSwift, _ := xcode.HasApusIntegration(cwd)
 
-	agentsPath := filepath.Join(cwd, "AGENTS.md")
-	agentsRaw, _ := os.ReadFile(agentsPath)
-	hasAgents := strings.Contains(string(agentsRaw), "Apus runs at")
+	hasAgents, _ := readManagedAgentsFile(cwd)
 
 	if !pbxHasApus && !hasSwift && !hasAgents {
 		terminal.StatusNotIntegrated()

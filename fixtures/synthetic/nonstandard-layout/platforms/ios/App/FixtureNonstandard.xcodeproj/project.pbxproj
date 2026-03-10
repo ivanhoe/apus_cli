@@ -1,0 +1,6 @@
+// !$*UTF8*$!
+{
+	objects = {
+	};
+	rootObject = AAAAAAAAAAAAAAAAAAAAAAAA /* Project object */;
+}

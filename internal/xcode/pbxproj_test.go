@@ -120,6 +120,106 @@ func TestNormalizeLocalApusReference_NoRemote(t *testing.T) {
 	}
 }
 
+func TestDetectApusDependencyInSource_LocalAndRemote(t *testing.T) {
+	input := `
+		AAAAAAAAAAAAAAAAAAAAAAAA /* XCRemoteSwiftPackageReference "Apus" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ivanhoe/apus";
+		};
+		BBBBBBBBBBBBBBBBBBBBBBBB /* XCLocalSwiftPackageReference "../apus" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../apus;
+		};
+`
+
+	state := detectApusDependencyInSource(input)
+	if !state.Remote || !state.Local {
+		t.Fatalf("expected both remote and local dependency states, got %+v", state)
+	}
+}
+
+func TestAddApusDependencyWithLocalPath(t *testing.T) {
+	projectUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	targetUUID := "BBBBBBBBBBBBBBBBBBBBBBBB"
+	frameworksUUID := "CCCCCCCCCCCCCCCCCCCCCCCC"
+
+	pbxproj := `// !$*UTF8*$!
+{
+	objects = {
+
+/* Begin PBXBuildFile section */
+/* End PBXBuildFile section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		` + frameworksUUID + ` /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		` + targetUUID + ` /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				` + frameworksUUID + ` /* Frameworks */,
+			);
+			packageProductDependencies = (
+			);
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		` + projectUUID + ` /* Project object */ = {
+			isa = PBXProject;
+			packageReferences = (
+			);
+		};
+/* End PBXProject section */
+
+/* Begin XCSwiftPackageProductDependency section */
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = ` + projectUUID + ` /* Project object */;
+}
+`
+
+	dir := t.TempDir()
+	localApusDir := filepath.Join(dir, "vendor", "apus")
+	if err := os.MkdirAll(localApusDir, 0o755); err != nil {
+		t.Fatalf("mkdir local apus dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localApusDir, "Package.swift"), []byte("// swift-tools-version: 5.9"), 0o644); err != nil {
+		t.Fatalf("write Package.swift: %v", err)
+	}
+
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	pbxFile := filepath.Join(projDir, "project.pbxproj")
+	if err := os.WriteFile(pbxFile, []byte(pbxproj), 0o644); err != nil {
+		t.Fatalf("write pbxproj: %v", err)
+	}
+
+	if err := AddApusDependencyWithLocalPath(projDir, "MyApp", localApusDir); err != nil {
+		t.Fatalf("AddApusDependencyWithLocalPath() error: %v", err)
+	}
+
+	updated, err := os.ReadFile(pbxFile)
+	if err != nil {
+		t.Fatalf("read pbxproj: %v", err)
+	}
+	src := string(updated)
+	if !strings.Contains(src, `relativePath = vendor/apus;`) {
+		t.Fatalf("expected local package relative path, got:\n%s", src)
+	}
+	if strings.Contains(src, apusRepoURL) {
+		t.Fatalf("did not expect remote Apus URL in local package setup:\n%s", src)
+	}
+}
+
 func TestAddToPackageReferences_Idempotent(t *testing.T) {
 	remoteUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
 	input := `
@@ -367,10 +467,11 @@ func TestRemoveApusDependency(t *testing.T) {
 		};
 /* End XCSwiftPackageProductDependency section */
 
-	};
+		};
 	rootObject = ` + projectUUID + ` /* Project object */;
 }
 `
+
 	dir := t.TempDir()
 	projDir := filepath.Join(dir, "MyApp.xcodeproj")
 	os.MkdirAll(projDir, 0o755)
@@ -388,7 +489,7 @@ func TestRemoveApusDependency(t *testing.T) {
 	for _, needle := range []string{
 		"ivanhoe/apus",
 		"XCRemoteSwiftPackageReference",
-		"XCSwiftPackageProductDependency",
+		"productName = Apus;",
 		"Apus in Frameworks",
 		remoteUUID,
 		depUUID,
@@ -404,6 +505,167 @@ func TestRemoveApusDependency(t *testing.T) {
 		if !strings.Contains(result, marker) {
 			t.Fatalf("expected %q to remain in pbxproj", marker)
 		}
+	}
+}
+
+func TestRemoveApusDependency_LocalOnly(t *testing.T) {
+	localUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	depUUID := "BBBBBBBBBBBBBBBBBBBBBBBB"
+	buildUUID := "CCCCCCCCCCCCCCCCCCCCCCCC"
+	frameworksUUID := "DDDDDDDDDDDDDDDDDDDDDDDD"
+	projectUUID := "EEEEEEEEEEEEEEEEEEEEEEEE"
+	targetUUID := "FFFFFFFFFFFFFFFFFFFFFFFF"
+
+	pbxproj := `// !$*UTF8*$!
+{
+	objects = {
+
+/* Begin PBXBuildFile section */
+		` + buildUUID + ` /* Apus in Frameworks */ = {isa = PBXBuildFile; productRef = ` + depUUID + ` /* Apus */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		` + frameworksUUID + ` /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				` + buildUUID + ` /* Apus in Frameworks */,
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXProject section */
+		` + projectUUID + ` /* Project object */ = {
+			isa = PBXProject;
+			packageReferences = (
+				` + localUUID + ` /* XCLocalSwiftPackageReference "../apus" */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXNativeTarget section */
+		` + targetUUID + ` /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				` + frameworksUUID + ` /* Frameworks */,
+			);
+			packageProductDependencies = (
+				` + depUUID + ` /* Apus */,
+			);
+		};
+/* End PBXNativeTarget section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		` + localUUID + ` /* XCLocalSwiftPackageReference "../apus" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../apus;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		` + depUUID + ` /* Apus */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ` + localUUID + ` /* XCLocalSwiftPackageReference "../apus" */;
+			productName = Apus;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+	};
+}
+`
+
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	pbxPath := filepath.Join(projDir, "project.pbxproj")
+	if err := os.WriteFile(pbxPath, []byte(pbxproj), 0o644); err != nil {
+		t.Fatalf("write pbxproj: %v", err)
+	}
+
+	if err := RemoveApusDependency(projDir, "MyApp"); err != nil {
+		t.Fatalf("RemoveApusDependency() error: %v", err)
+	}
+
+	updated, err := os.ReadFile(pbxPath)
+	if err != nil {
+		t.Fatalf("read pbxproj: %v", err)
+	}
+	src := string(updated)
+	if strings.Contains(src, "relativePath = ../apus") {
+		t.Fatalf("expected local package reference to be removed:\n%s", src)
+	}
+	if strings.Contains(src, "productName = Apus;") {
+		t.Fatalf("expected Apus product dependency to be removed:\n%s", src)
+	}
+	if strings.Contains(src, "Apus in Frameworks") {
+		t.Fatalf("expected Apus build file to be removed:\n%s", src)
+	}
+}
+
+func TestAddAndRemoveApusDependencyWithLocalPath_RoundTripsWithoutFrameworksPhase(t *testing.T) {
+	projectUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	targetUUID := "BBBBBBBBBBBBBBBBBBBBBBBB"
+
+	pbxproj := `// !$*UTF8*$!
+{
+	objects = {
+
+/* Begin PBXBuildFile section */
+/* End PBXBuildFile section */
+
+/* Begin PBXNativeTarget section */
+		` + targetUUID + ` /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				111111111111111111111111 /* Sources */,
+				222222222222222222222222 /* Resources */,
+			);
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		` + projectUUID + ` /* Project object */ = {
+			isa = PBXProject;
+		};
+/* End PBXProject section */
+
+	};
+	rootObject = ` + projectUUID + ` /* Project object */;
+}
+`
+
+	dir := t.TempDir()
+	localApusDir := filepath.Join(dir, "vendor", "apus")
+	if err := os.MkdirAll(localApusDir, 0o755); err != nil {
+		t.Fatalf("mkdir local apus dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localApusDir, "Package.swift"), []byte("// swift-tools-version: 5.9"), 0o644); err != nil {
+		t.Fatalf("write Package.swift: %v", err)
+	}
+
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+	pbxPath := filepath.Join(projDir, "project.pbxproj")
+	if err := os.WriteFile(pbxPath, []byte(pbxproj), 0o644); err != nil {
+		t.Fatalf("write pbxproj: %v", err)
+	}
+
+	if err := AddApusDependencyWithLocalPath(projDir, "MyApp", localApusDir); err != nil {
+		t.Fatalf("AddApusDependencyWithLocalPath() error: %v", err)
+	}
+	if err := RemoveApusDependency(projDir, "MyApp"); err != nil {
+		t.Fatalf("RemoveApusDependency() error: %v", err)
+	}
+
+	updated, err := os.ReadFile(pbxPath)
+	if err != nil {
+		t.Fatalf("read pbxproj: %v", err)
+	}
+	if normalizePBXProjForComparison(string(updated)) != normalizePBXProjForComparison(pbxproj) {
+		t.Fatalf("expected pbxproj to roundtrip cleanly.\nwant:\n%s\n\ngot:\n%s", pbxproj, string(updated))
 	}
 }
 
@@ -438,4 +700,18 @@ func TestPbxprojPath_NoXcodeproj(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error when no .xcodeproj exists")
 	}
+}
+
+func normalizePBXProjForComparison(src string) string {
+	lines := strings.Split(strings.ReplaceAll(src, "\r\n", "\n"), "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+	normalized := strings.Join(lines, "\n")
+	normalized = regexp.MustCompile(`(/\* End [^\n]+ section \*/)\n(?:[ \t]*\n)+([ \t]*\};)`).ReplaceAllString(normalized, "$1\n$2")
+	return regexp.MustCompile(`\n{3,}`).ReplaceAllString(normalized, "\n\n")
 }

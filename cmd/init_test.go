@@ -272,3 +272,37 @@ func TestBackupCandidates(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveInitPackagePath(t *testing.T) {
+	dir := t.TempDir()
+	localApusDir := filepath.Join(dir, "apus")
+	if err := os.MkdirAll(localApusDir, 0o755); err != nil {
+		t.Fatalf("mkdir local apus dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localApusDir, "Package.swift"), []byte("// swift-tools-version: 5.9"), 0o644); err != nil {
+		t.Fatalf("write Package.swift: %v", err)
+	}
+
+	resolved, err := resolveInitPackagePath(localApusDir)
+	if err != nil {
+		t.Fatalf("resolveInitPackagePath() error: %v", err)
+	}
+	if resolved != localApusDir {
+		t.Fatalf("expected %s, got %s", localApusDir, resolved)
+	}
+}
+
+func TestResolveInitPackagePath_RejectsMissingManifest(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "no-manifest"), 0o755); err != nil {
+		t.Fatalf("mkdir no-manifest: %v", err)
+	}
+
+	_, err := resolveInitPackagePath(filepath.Join(dir, "no-manifest"))
+	if err == nil {
+		t.Fatalf("expected resolveInitPackagePath() to fail")
+	}
+	if !strings.Contains(err.Error(), "Package.swift not found") {
+		t.Fatalf("expected Package.swift validation error, got: %v", err)
+	}
+}

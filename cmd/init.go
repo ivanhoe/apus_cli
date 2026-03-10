@@ -17,6 +17,8 @@ import (
 )
 
 var initDryRun bool
+var initTarget string
+var initPackagePath string
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -30,6 +32,8 @@ If preflight checks fail or injection cannot be performed safely, prefer manual 
 
 func init() {
 	initCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "Show what would change without modifying any files")
+	initCmd.Flags().StringVar(&initTarget, "target", "", "App target to modify when the project contains multiple app targets")
+	initCmd.Flags().StringVar(&initPackagePath, "package-path", "", "Use a local Apus package path instead of the default remote GitHub dependency")
 }
 
 func runInit(_ *cobra.Command, _ []string) error {
@@ -43,10 +47,10 @@ func runInit(_ *cobra.Command, _ []string) error {
 	}
 
 	// ── Detect project ──
-	info, err := xcode.DetectProject(cwd)
+	info, err := xcode.DetectProjectWithTarget(cwd, initTarget)
 	if err != nil {
 		terminal.Fatal("project detection failed", err)
-		return err
+		return markPrinted(err)
 	}
 
 	terminal.Detected(filepath.Base(info.ProjectPath), info.Target+" (SwiftUI)")
@@ -58,6 +62,11 @@ func runInit(_ *cobra.Command, _ []string) error {
 
 	terminal.Info("`apus init` is best-effort and currently optimized for SwiftUI-style entry points.")
 	terminal.Info("A backup of modified files will be created before changes are applied.")
+
+	resolvedPackagePath, err := resolveInitPackagePath(initPackagePath)
+	if err != nil {
+		return err
+	}
 
 	backup, err := createProjectBackup(cwd, backupCandidates(info))
 	if err != nil {
@@ -74,14 +83,14 @@ func runInit(_ *cobra.Command, _ []string) error {
 	{
 		pbxBefore := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
 		done := p.Start("Adding Apus to project.pbxproj")
-		err = xcode.AddApusDependency(info.ProjectPath, info.Target)
+		err = xcode.AddApusDependencyWithLocalPath(info.ProjectPath, info.Target, resolvedPackagePath)
 		done(err)
 		if err != nil {
 			terminal.Fatal("pbxproj modification failed", err)
 			if rollbackErr := backup.restore(); rollbackErr != nil {
 				return fmt.Errorf("pbxproj modification failed: %w (rollback failed: %v)", err, rollbackErr)
 			}
-			return fmt.Errorf("pbxproj modification failed; backed-up files restored: %w", err)
+			return markPrinted(fmt.Errorf("pbxproj modification failed; backed-up files restored: %w", err))
 		}
 		pbxAfter := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
 		if pbxAfter != pbxBefore {
@@ -99,7 +108,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 			if rollbackErr := backup.restore(); rollbackErr != nil {
 				return fmt.Errorf("package resolution failed: %w (rollback failed: %v)", err, rollbackErr)
 			}
-			return fmt.Errorf("package resolution failed; backed-up files restored (resolved packages may remain): %w", err)
+			return markPrinted(fmt.Errorf("package resolution failed; backed-up files restored (resolved packages may remain): %w", err))
 		}
 	}
 
@@ -132,7 +141,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 				if rollbackErr := backup.restore(); rollbackErr != nil {
 					return fmt.Errorf("swift injection failed: %w (rollback failed: %v)", err, rollbackErr)
 				}
-				return fmt.Errorf("swift injection failed; backed-up files restored (resolved packages may remain): %w", err)
+				return markPrinted(fmt.Errorf("swift injection failed; backed-up files restored (resolved packages may remain): %w", err))
 			}
 			entryAfter := countLines(info.EntryFile)
 			if entryAfter != entryBefore {
@@ -291,7 +300,9 @@ func countLines(path string) int {
 	return strings.Count(string(data), "\n")
 }
 
-const agentsMDTemplate = `# AGENTS.md — {{ .ProjectName }}
+const agentsMDTemplate = managedAgentsMarker + `
+
+# AGENTS.md — {{ .ProjectName }}
 
 ## MCP Server
 
@@ -301,7 +312,7 @@ Apus runs at ` + "`http://localhost:9847/mcp`" + ` when the app is running in th
 
 ` + "```bash" + `
 xcodebuild -scheme {{ .ProjectName }} \
-  -destination "platform=iOS Simulator,name=iPhone 16e" \
+  -destination "generic/platform=iOS Simulator" \
   -quiet CODE_SIGN_IDENTITY="-"
 ` + "```" + `
 
@@ -344,4 +355,29 @@ func writeAgentsMD(dir string, info *xcode.ProjectInfo) error {
 		BundleOrg:   strings.ToLower(info.ProjectName),
 	}
 	return tmpl.Execute(f, data)
+}
+
+func resolveInitPackagePath(rawPath string) (string, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", nil
+	}
+
+	if !filepath.IsAbs(path) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve package path: %w", err)
+		}
+		path = absolute
+	}
+
+	info, err := os.Stat(filepath.Join(path, "Package.swift"))
+	if err != nil {
+		return "", fmt.Errorf("invalid --package-path %q: Package.swift not found", rawPath)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("invalid --package-path %q: Package.swift is a directory", rawPath)
+	}
+
+	return path, nil
 }

@@ -28,7 +28,7 @@ func TestChooseAppTarget_PrefersProjectName(t *testing.T) {
 	projPath := "/tmp/FancyApp.xcodeproj"
 	targets := []string{"OtherApp", "FancyApp"}
 
-	got, err := chooseAppTarget(targets, projPath)
+	got, err := chooseAppTarget(targets, projPath, "")
 	if err != nil {
 		t.Fatalf("chooseAppTarget() returned error: %v", err)
 	}
@@ -41,9 +41,35 @@ func TestChooseAppTarget_NoAppTarget(t *testing.T) {
 	projPath := "/tmp/FancyApp.xcodeproj"
 	targets := []string{"FancyAppTests", "FancyAppUITests"}
 
-	_, err := chooseAppTarget(targets, projPath)
+	_, err := chooseAppTarget(targets, projPath, "")
 	if err == nil {
 		t.Fatalf("expected chooseAppTarget() to fail when only test targets exist")
+	}
+}
+
+func TestChooseAppTarget_UsesPreferredTarget(t *testing.T) {
+	projPath := "/tmp/FancyApp.xcodeproj"
+	targets := []string{"OtherApp", "FancyApp"}
+
+	got, err := chooseAppTarget(targets, projPath, "OtherApp")
+	if err != nil {
+		t.Fatalf("chooseAppTarget() returned error: %v", err)
+	}
+	if got != "OtherApp" {
+		t.Fatalf("chooseAppTarget() = %q, want %q", got, "OtherApp")
+	}
+}
+
+func TestChooseAppTarget_FailsWhenAmbiguous(t *testing.T) {
+	projPath := "/tmp/Workspace.xcodeproj"
+	targets := []string{"Alpha", "Beta"}
+
+	_, err := chooseAppTarget(targets, projPath, "")
+	if err == nil {
+		t.Fatalf("expected chooseAppTarget() to fail for ambiguous targets")
+	}
+	if !strings.Contains(err.Error(), "--target") {
+		t.Fatalf("expected ambiguity hint in error, got: %v", err)
 	}
 }
 

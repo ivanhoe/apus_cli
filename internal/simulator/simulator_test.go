@@ -181,29 +181,43 @@ func TestBoot_RealBootError(t *testing.T) {
 	}
 }
 
-func TestWaitForHTTPReady_SucceedsOnHealthyEndpoint(t *testing.T) {
+func TestWaitForMCPReady_SucceedsOnJSONRPCResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/mcp" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`))
 	}))
 	t.Cleanup(server.Close)
 
-	if err := waitForHTTPReady(server.URL, 500*time.Millisecond, 25*time.Millisecond); err != nil {
+	if err := waitForMCPReady(server.URL+"/mcp", 500*time.Millisecond, 25*time.Millisecond); err != nil {
 		t.Fatalf("expected readiness to succeed, got: %v", err)
 	}
 }
 
-func TestWaitForHTTPReady_RetriesUntilServerHealthy(t *testing.T) {
+func TestWaitForMCPReady_RetriesUntilServerHealthy(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if atomic.AddInt32(&calls, 1) < 3 {
-			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("not mcp"))
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"initialize first"}}`))
 	}))
 	t.Cleanup(server.Close)
 
-	if err := waitForHTTPReady(server.URL, 750*time.Millisecond, 20*time.Millisecond); err != nil {
+	if err := waitForMCPReady(server.URL, 750*time.Millisecond, 20*time.Millisecond); err != nil {
 		t.Fatalf("expected readiness to eventually succeed, got: %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got < 3 {
@@ -211,13 +225,15 @@ func TestWaitForHTTPReady_RetriesUntilServerHealthy(t *testing.T) {
 	}
 }
 
-func TestWaitForHTTPReady_FailsOnTimeout(t *testing.T) {
+func TestWaitForMCPReady_FailsOnTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html>wrong endpoint</html>"))
 	}))
 	t.Cleanup(server.Close)
 
-	err := waitForHTTPReady(server.URL, 150*time.Millisecond, 20*time.Millisecond)
+	err := waitForMCPReady(server.URL, 150*time.Millisecond, 20*time.Millisecond)
 	if err == nil {
 		t.Fatalf("expected timeout error")
 	}

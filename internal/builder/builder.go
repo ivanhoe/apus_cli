@@ -84,9 +84,11 @@ func Build(projectDir, scheme, destinationUDID string) (*BuildResult, error) {
 func ResolvePackageDependencies(projectPath string) error {
 	projectDir := filepath.Dir(projectPath)
 	projectName := filepath.Base(projectPath)
+	clonedSourcePackages := filepath.Join(projectDir, ".build", "SourcePackages")
 	cmd := exec.Command("xcodebuild",
 		"-resolvePackageDependencies",
 		"-project", projectName,
+		"-clonedSourcePackagesDirPath", clonedSourcePackages,
 	)
 	cmd.Dir = projectDir
 

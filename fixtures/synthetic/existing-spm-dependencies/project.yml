@@ -1,0 +1,28 @@
+name: FixtureExistingSPMDependencies
+options:
+  bundleIdPrefix: dev.fixture
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+
+packages:
+  FixtureSupportKit:
+    path: Packages/FixtureSupportKit
+
+targets:
+  FixtureExistingSPMDependencies:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    dependencies:
+      - package: FixtureSupportKit
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: dev.fixture.fixtureexistingspmdependencies
+        SWIFT_VERSION: 5.9
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"

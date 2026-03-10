@@ -66,7 +66,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("no iPhone simulator available", err)
-			return err
+			return markPrinted(err)
 		}
 		terminal.Info(sim.Name + " · " + sim.UDID)
 	}
@@ -80,7 +80,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("scaffold failed", err)
-			return err
+			return markPrinted(err)
 		}
 	}
 
@@ -92,13 +92,13 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = builder.EnsureXcodeGen(); err != nil {
 			done(err)
 			terminal.Fatal("xcodegen not available", err)
-			return err
+			return markPrinted(err)
 		}
 		err = builder.Generate(projectDir)
 		done(err)
 		if err != nil {
 			terminal.Fatal("xcodegen generate failed", err)
-			return err
+			return markPrinted(err)
 		}
 	}
 
@@ -110,7 +110,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		done(err)
 		if err != nil {
 			terminal.Fatal("build failed", err)
-			return err
+			return markPrinted(err)
 		}
 	}
 
@@ -124,7 +124,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = simulator.Boot(sim.UDID); err != nil {
 			done(err)
 			terminal.Fatal("simulator boot failed", err)
-			return err
+			return markPrinted(err)
 		}
 		if err = simulator.UninstallIfPresent(sim.UDID, result.BundleID); err != nil {
 			terminal.Info("warning: cleanup old install failed, continuing with fresh install")
@@ -132,12 +132,12 @@ func runNew(cmd *cobra.Command, args []string) error {
 		if err = simulator.Install(sim.UDID, result.AppPath); err != nil {
 			done(err)
 			terminal.Fatal("install failed", err)
-			return err
+			return markPrinted(err)
 		}
 		if err = simulator.LaunchWithProjectRoot(sim.UDID, result.BundleID, projectDir); err != nil {
 			done(err)
 			terminal.Fatal("launch failed", err)
-			return err
+			return markPrinted(err)
 		}
 		done(nil)
 	}
@@ -145,14 +145,14 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// ── Step 6: MCP health check ──
 	{
 		done := p.Start("Waiting for MCP server")
-		mcpURL := fmt.Sprintf("http://127.0.0.1:%d/", mcpPort)
+		mcpURL := fmt.Sprintf("http://127.0.0.1:%d/mcp", mcpPort)
 		err = simulator.WaitForMCPReady(mcpURL, 30*time.Second)
 		done(err)
 		if err != nil {
 			terminal.Fatal("MCP health check failed", err)
 			terminal.Info(fmt.Sprintf("The app was launched, but MCP did not respond on port %d in time.", mcpPort))
 			terminal.Info(fmt.Sprintf("Try running the app again and confirm no other simulator app is using port %d.", mcpPort))
-			return err
+			return markPrinted(err)
 		}
 	}
 

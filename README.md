@@ -41,6 +41,7 @@ Best-effort integration of Apus into an existing Xcode project. Backs up modifie
 ```bash
 cd /path/to/your/project
 apus init
+apus init --target MyAppBeta
 ```
 
 This will:
@@ -56,6 +57,7 @@ Remove Apus from an existing Xcode project (reverses `apus init`).
 ```bash
 cd /path/to/your/project
 apus remove
+apus remove --target MyAppBeta
 ```
 
 This will:
@@ -68,6 +70,16 @@ This will:
 - macOS
 - Xcode 15+ with command line tools (`xcode-select --install`)
 - [xcodegen](https://github.com/yonaskolb/XcodeGen) (for `apus new`)
+
+## Fixture Matrix
+
+We track end-to-end coverage goals in [`fixtures/matrix.json`](./fixtures/matrix.json), split into
+`planned` and `ready` fixtures.
+
+```bash
+go run ./tools/fixturematrix validate
+go run ./tools/fixturematrix plan
+```
 
 ## How it works
 

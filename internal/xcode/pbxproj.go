@@ -17,9 +17,48 @@ const (
 	apusLegacyMinVersion = "0.3.0"
 )
 
+// DependencyState describes whether the project references Apus remotely, locally, or both.
+type DependencyState struct {
+	Remote bool
+	Local  bool
+}
+
+// Any reports whether any Apus package reference is present in the project.
+func (s DependencyState) Any() bool {
+	return s.Remote || s.Local
+}
+
+// DetectApusDependency returns whether the project references Apus via remote and/or local SPM packages.
+func DetectApusDependency(projPath string) (DependencyState, error) {
+	pbxPath, err := pbxprojPath(projPath)
+	if err != nil {
+		return DependencyState{}, err
+	}
+
+	raw, err := os.ReadFile(pbxPath)
+	if err != nil {
+		return DependencyState{}, fmt.Errorf("read pbxproj: %w", err)
+	}
+
+	return detectApusDependencyInSource(string(raw)), nil
+}
+
+func detectApusDependencyInSource(src string) DependencyState {
+	return DependencyState{
+		Remote: strings.Contains(src, apusRepoURL),
+		Local:  len(findLocalApusRefUUIDs(src)) > 0,
+	}
+}
+
 // AddApusDependency inserts Apus as a Swift Package dependency in the .pbxproj file.
 // It is idempotent — returns nil without modifying the file if Apus is already present.
 func AddApusDependency(projPath string, target string) error {
+	return AddApusDependencyWithLocalPath(projPath, target, "")
+}
+
+// AddApusDependencyWithLocalPath inserts Apus as either a remote or local Swift Package dependency.
+// When localPath is empty, the remote GitHub dependency is used.
+func AddApusDependencyWithLocalPath(projPath string, target string, localPath string) error {
 	pbxPath, err := pbxprojPath(projPath)
 	if err != nil {
 		return err
@@ -30,6 +69,15 @@ func AddApusDependency(projPath string, target string) error {
 		return fmt.Errorf("read pbxproj: %w", err)
 	}
 	src := string(raw)
+	localPath = strings.TrimSpace(localPath)
+	state := detectApusDependencyInSource(src)
+
+	if localPath != "" {
+		if state.Any() {
+			return nil
+		}
+		return addLocalApusDependency(pbxPath, src, target, localPath)
+	}
 
 	// Idempotency: already has Apus remote reference. Migrate legacy requirement,
 	// normalize old local references, and ensure target wiring is complete.
@@ -101,6 +149,51 @@ func AddApusDependency(projPath string, target string) error {
 	src, err = ensureApusDependencyWiring(src, target)
 	if err != nil {
 		return fmt.Errorf("ensure Apus dependency wiring: %w", err)
+	}
+
+	return os.WriteFile(pbxPath, []byte(src), 0o644)
+}
+
+func addLocalApusDependency(pbxPath, src, target, localPath string) error {
+	projectDir := filepath.Dir(filepath.Dir(pbxPath))
+	relativePath, err := filepath.Rel(projectDir, localPath)
+	if err != nil {
+		return fmt.Errorf("compute local package path: %w", err)
+	}
+	relativePath = filepath.ToSlash(relativePath)
+
+	refUUID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate UUID: %w", err)
+	}
+	depUUID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate UUID: %w", err)
+	}
+	buildUUID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate UUID: %w", err)
+	}
+
+	src, err = insertLocalPackageRef(src, refUUID, relativePath)
+	if err != nil {
+		return fmt.Errorf("insert XCLocalSwiftPackageReference: %w", err)
+	}
+	src, err = insertProductDependencyAfterSection(src, depUUID, refUUID, localPackageReferenceComment(relativePath), "/* End XCLocalSwiftPackageReference section */")
+	if err != nil {
+		return fmt.Errorf("insert XCSwiftPackageProductDependency: %w", err)
+	}
+	src, err = insertBuildFile(src, buildUUID, depUUID)
+	if err != nil {
+		return fmt.Errorf("insert PBXBuildFile: %w", err)
+	}
+	src, err = addToPackageReferencesWithComment(src, refUUID, localPackageReferenceComment(relativePath))
+	if err != nil {
+		return fmt.Errorf("add to packageReferences: %w", err)
+	}
+	src, err = addToTarget(src, target, depUUID, buildUUID)
+	if err != nil {
+		return fmt.Errorf("add to target %s: %w", target, err)
 	}
 
 	return os.WriteFile(pbxPath, []byte(src), 0o644)
@@ -238,13 +331,61 @@ func findApusBuildFileUUID(src, depUUID string) string {
 	return m[1]
 }
 
+func findApusProductDependencyUUIDs(src string, packageUUIDs []string) []string {
+	if len(packageUUIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(packageUUIDs))
+	var depUUIDs []string
+	for _, packageUUID := range packageUUIDs {
+		if packageUUID == "" {
+			continue
+		}
+		depUUID := findApusProductDependencyUUID(src, packageUUID)
+		if depUUID == "" {
+			continue
+		}
+		if _, ok := seen[depUUID]; ok {
+			continue
+		}
+		seen[depUUID] = struct{}{}
+		depUUIDs = append(depUUIDs, depUUID)
+	}
+	return depUUIDs
+}
+
+func findApusBuildFileUUIDs(src string, depUUIDs []string) []string {
+	if len(depUUIDs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{}, len(depUUIDs))
+	var buildUUIDs []string
+	for _, depUUID := range depUUIDs {
+		if depUUID == "" {
+			continue
+		}
+		buildUUID := findApusBuildFileUUID(src, depUUID)
+		if buildUUID == "" {
+			continue
+		}
+		if _, ok := seen[buildUUID]; ok {
+			continue
+		}
+		seen[buildUUID] = struct{}{}
+		buildUUIDs = append(buildUUIDs, buildUUID)
+	}
+	return buildUUIDs
+}
+
 func replaceLocalApusPackageLine(src, localUUID, remoteUUID string) string {
 	re := regexp.MustCompile(`package = ` + localUUID + ` /\* XCLocalSwiftPackageReference "[^"]*" \*/;`)
 	return re.ReplaceAllString(src, fmt.Sprintf(`package = %s /* XCRemoteSwiftPackageReference "%s" */;`, remoteUUID, apusProduct))
 }
 
 func removeLocalApusPackageReferenceLine(src, localUUID string) string {
-	re := regexp.MustCompile(`\n\s*` + localUUID + ` /\* XCLocalSwiftPackageReference "[^"]*" \*/,\s*`)
+	re := regexp.MustCompile(`(?m)\n[ \t]*` + localUUID + ` /\* XCLocalSwiftPackageReference "[^"]*" \*/,[ \t]*\n`)
 	return re.ReplaceAllString(src, "\n")
 }
 
@@ -319,11 +460,47 @@ func insertRemotePackageRef(src, refUUID string) (string, error) {
 }
 
 func insertProductDependency(src, depUUID, refUUID string) (string, error) {
+	return insertProductDependencyAfterSection(src, depUUID, refUUID, fmt.Sprintf(`XCRemoteSwiftPackageReference "%s"`, apusProduct), "/* End XCRemoteSwiftPackageReference section */")
+}
+
+func insertLocalPackageRef(src, refUUID, relativePath string) (string, error) {
+	entry := fmt.Sprintf(`		%s /* %s */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = %s;
+		};`, refUUID, localPackageReferenceComment(relativePath), relativePath)
+
+	const sectionEnd = "/* End XCLocalSwiftPackageReference section */"
+	if !strings.Contains(src, sectionEnd) {
+		section := "\n/* Begin XCLocalSwiftPackageReference section */\n" +
+			entry + "\n" +
+			sectionEnd + "\n"
+		rootIdx := strings.Index(src, "rootObject")
+		if rootIdx == -1 {
+			return "", fmt.Errorf("cannot find rootObject in pbxproj to insert XCLocalSwiftPackageReference section")
+		}
+		closingIdx := strings.LastIndex(src[:rootIdx], "};")
+		if closingIdx == -1 {
+			return "", fmt.Errorf("cannot find objects closing brace in pbxproj")
+		}
+		return src[:closingIdx] + section + src[closingIdx:], nil
+	}
+	return insertBeforeSectionEnd(src, sectionEnd, entry)
+}
+
+func localPackageReferenceComment(relativePath string) string {
+	return fmt.Sprintf(`XCLocalSwiftPackageReference "%s"`, relativePath)
+}
+
+func insertProductDependencyWithComment(src, depUUID, refUUID, packageComment string) (string, error) {
+	return insertProductDependencyAfterSection(src, depUUID, refUUID, packageComment, "/* End XCRemoteSwiftPackageReference section */")
+}
+
+func insertProductDependencyAfterSection(src, depUUID, refUUID, packageComment, sectionEndMarker string) (string, error) {
 	entry := fmt.Sprintf(`		%s /* %s */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = %s /* XCRemoteSwiftPackageReference "%s" */;
+			package = %s /* %s */;
 			productName = %s;
-		};`, depUUID, apusProduct, refUUID, apusProduct, apusProduct)
+		};`, depUUID, apusProduct, refUUID, packageComment, apusProduct)
 
 	// Section may not exist yet if there are no SPM deps — create it
 	const sectionEnd = "/* End XCSwiftPackageProductDependency section */"
@@ -331,13 +508,12 @@ func insertProductDependency(src, depUUID, refUUID string) (string, error) {
 		section := "\n/* Begin XCSwiftPackageProductDependency section */\n" +
 			entry + "\n" +
 			sectionEnd + "\n"
-		// Insert AFTER XCRemoteSwiftPackageReference section (not inside it)
-		const refEnd = "/* End XCRemoteSwiftPackageReference section */"
-		idx := strings.Index(src, refEnd)
+		// Insert after the package reference section (not inside it).
+		idx := strings.Index(src, sectionEndMarker)
 		if idx == -1 {
-			return "", fmt.Errorf("cannot find XCRemoteSwiftPackageReference section end marker")
+			return "", fmt.Errorf("cannot find package reference section end marker %q", sectionEndMarker)
 		}
-		insertPoint := idx + len(refEnd)
+		insertPoint := idx + len(sectionEndMarker)
 		return src[:insertPoint] + section + src[insertPoint:], nil
 	}
 	return insertBeforeSectionEnd(src, sectionEnd, entry)
@@ -359,6 +535,10 @@ func packageReferencesContain(src, refUUID string) bool {
 }
 
 func addToPackageReferences(src, refUUID string) (string, error) {
+	return addToPackageReferencesWithComment(src, refUUID, fmt.Sprintf(`XCRemoteSwiftPackageReference "%s"`, apusProduct))
+}
+
+func addToPackageReferencesWithComment(src, refUUID, comment string) (string, error) {
 	if packageReferencesContain(src, refUUID) {
 		return src, nil
 	}
@@ -377,14 +557,14 @@ func addToPackageReferences(src, refUUID string) (string, error) {
 		if lastBrace == -1 {
 			return "", fmt.Errorf("cannot find PBXProject object closing brace")
 		}
-		injection := fmt.Sprintf("\t\t\tpackageReferences = (\n\t\t\t\t%s /* XCRemoteSwiftPackageReference \"%s\" */,\n\t\t\t);\n", refUUID, apusProduct)
+		injection := fmt.Sprintf("\t\t\tpackageReferences = (\n\t\t\t\t%s /* %s */,\n\t\t\t);\n", refUUID, comment)
 		return src[:lastBrace] + injection + src[lastBrace:], nil
 	}
 
 	// Append to existing packageReferences list
 	loc := re.FindStringIndex(src)
 	insertPoint := loc[1] // right after `packageReferences = (`
-	entry := fmt.Sprintf("\n\t\t\t\t%s /* XCRemoteSwiftPackageReference \"%s\" */,", refUUID, apusProduct)
+	entry := fmt.Sprintf("\n\t\t\t\t%s /* %s */,", refUUID, comment)
 	return src[:insertPoint] + entry + src[insertPoint:], nil
 }
 
@@ -592,42 +772,51 @@ func RemoveApusDependency(projPath string, target string) error {
 	}
 	src := string(raw)
 
-	if !strings.Contains(src, apusRepoURL) {
-		return nil // Apus not present
+	state := detectApusDependencyInSource(src)
+	if !state.Any() {
+		return nil
 	}
 
-	remoteUUID, err := findApusRemoteRefUUID(src)
-	if err != nil {
-		return fmt.Errorf("find Apus remote ref: %w", err)
+	remoteUUID := ""
+	if state.Remote {
+		remoteUUID, err = findApusRemoteRefUUID(src)
+		if err != nil {
+			return fmt.Errorf("find Apus remote ref: %w", err)
+		}
 	}
 
-	depUUID := findApusProductDependencyUUID(src, remoteUUID)
-	var buildUUID string
-	if depUUID != "" {
-		buildUUID = findApusBuildFileUUID(src, depUUID)
+	localUUIDs := findLocalApusRefUUIDs(src)
+	packageUUIDs := make([]string, 0, len(localUUIDs)+1)
+	if remoteUUID != "" {
+		packageUUIDs = append(packageUUIDs, remoteUUID)
 	}
+	packageUUIDs = append(packageUUIDs, localUUIDs...)
+
+	depUUIDs := findApusProductDependencyUUIDs(src, packageUUIDs)
+	buildUUIDs := findApusBuildFileUUIDs(src, depUUIDs)
 
 	// Remove in reverse order of insertion
-	if buildUUID != "" {
+	for _, buildUUID := range buildUUIDs {
 		src = removeFromBuildPhaseFiles(src, buildUUID)
 		src = removeBuildFileEntry(src, buildUUID)
 	}
 
-	if depUUID != "" {
+	for _, depUUID := range depUUIDs {
 		src = removeFromTargetProductDeps(src, target, depUUID)
 		src = removeProductDependencyEntry(src, depUUID)
 	}
 
-	src = removeFromPackageRefsList(src, remoteUUID)
-	src = removeRemotePackageRefEntry(src, remoteUUID)
+	if remoteUUID != "" {
+		src = removeFromPackageRefsList(src, remoteUUID)
+		src = removeRemotePackageRefEntry(src, remoteUUID)
+	}
 
-	// Also remove any local Apus references
-	for _, localUUID := range findLocalApusRefUUIDs(src) {
-		src = replaceLocalApusPackageLine(src, localUUID, remoteUUID)
+	for _, localUUID := range localUUIDs {
 		src = removeLocalApusPackageReferenceLine(src, localUUID)
 		src = removeLocalApusReferenceObject(src, localUUID)
 	}
 
+	src = removeEmptyFrameworksPhases(src, target)
 	src = cleanupEmptySections(src)
 	src = cleanupEmptyLists(src)
 
@@ -635,17 +824,17 @@ func RemoveApusDependency(projPath string, target string) error {
 }
 
 func removeFromBuildPhaseFiles(src, buildUUID string) string {
-	re := regexp.MustCompile(`\n?\s*` + buildUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/,[ \t]*`)
+	re := regexp.MustCompile(`(?m)\n[ \t]*` + buildUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/,[ \t]*\n`)
 	return re.ReplaceAllString(src, "\n")
 }
 
 func removeBuildFileEntry(src, buildUUID string) string {
-	re := regexp.MustCompile(`\n?\s*` + buildUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/ = \{[^}]+\};[ \t]*`)
+	re := regexp.MustCompile(`(?m)\n[ \t]*` + buildUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/ = \{[^}]+\};[ \t]*\n`)
 	return re.ReplaceAllString(src, "\n")
 }
 
 func removeFromTargetProductDeps(src, targetName, depUUID string) string {
-	re := regexp.MustCompile(`\n?\s*` + depUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` \*/,[ \t]*`)
+	re := regexp.MustCompile(`(?m)\n[ \t]*` + depUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` \*/,[ \t]*\n`)
 	return re.ReplaceAllString(src, "\n")
 }
 
@@ -656,7 +845,7 @@ func removeProductDependencyEntry(src, depUUID string) string {
 }
 
 func removeFromPackageRefsList(src, remoteUUID string) string {
-	re := regexp.MustCompile(`\n?\s*` + remoteUUID + ` /\* XCRemoteSwiftPackageReference "` + regexp.QuoteMeta(apusProduct) + `" \*/,[ \t]*`)
+	re := regexp.MustCompile(`(?m)\n[ \t]*` + remoteUUID + ` /\* XCRemoteSwiftPackageReference "` + regexp.QuoteMeta(apusProduct) + `" \*/,[ \t]*\n`)
 	return re.ReplaceAllString(src, "\n")
 }
 
@@ -666,8 +855,52 @@ func removeRemotePackageRefEntry(src, remoteUUID string) string {
 	return re.ReplaceAllString(src, "\n")
 }
 
+func removeEmptyFrameworksPhases(src, targetName string) string {
+	targetObjStart, targetObjEnd, err := findTargetObject(src, targetName)
+	if err != nil {
+		return src
+	}
+
+	targetObj := src[targetObjStart:targetObjEnd]
+	reUUID := regexp.MustCompile(`([0-9A-F]{24}) /\* Frameworks \*/`)
+	matches := reUUID.FindAllStringSubmatch(targetObj, -1)
+	if len(matches) == 0 {
+		return src
+	}
+
+	var emptyPhaseUUIDs []string
+	for _, match := range matches {
+		phaseUUID := match[1]
+		phasePattern := regexp.MustCompile(`(?s)\n?\s*` + phaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase;(.*?)\n\t\t\};[ \t]*`)
+		phaseMatch := phasePattern.FindStringSubmatch(src)
+		if len(phaseMatch) == 0 {
+			continue
+		}
+
+		if !regexp.MustCompile(`files\s*=\s*\(\s*\);`).MatchString(phaseMatch[1]) {
+			continue
+		}
+
+		refPattern := regexp.MustCompile(`\n[ \t]*` + phaseUUID + ` /\* Frameworks \*/,\n`)
+		targetObj = refPattern.ReplaceAllString(targetObj, "\n")
+		emptyPhaseUUIDs = append(emptyPhaseUUIDs, phaseUUID)
+	}
+
+	if len(emptyPhaseUUIDs) == 0 {
+		return src
+	}
+
+	src = src[:targetObjStart] + targetObj + src[targetObjEnd:]
+	for _, phaseUUID := range emptyPhaseUUIDs {
+		phasePattern := regexp.MustCompile(`(?s)\n?\s*` + phaseUUID + ` /\* Frameworks \*/ = \{\s*isa = PBXFrameworksBuildPhase;.*?\n\t\t\};[ \t]*`)
+		src = phasePattern.ReplaceAllString(src, "\n")
+	}
+
+	return src
+}
+
 func cleanupEmptySections(src string) string {
-	for _, section := range []string{"XCRemoteSwiftPackageReference", "XCSwiftPackageProductDependency"} {
+	for _, section := range []string{"PBXFrameworksBuildPhase", "XCRemoteSwiftPackageReference", "XCLocalSwiftPackageReference", "XCSwiftPackageProductDependency"} {
 		re := regexp.MustCompile(`(?s)\n?/\* Begin ` + section + ` section \*/\s*/\* End ` + section + ` section \*/\n?`)
 		src = re.ReplaceAllString(src, "\n")
 	}
@@ -676,8 +909,17 @@ func cleanupEmptySections(src string) string {
 
 func cleanupEmptyLists(src string) string {
 	for _, key := range []string{"packageReferences", "packageProductDependencies"} {
-		re := regexp.MustCompile(`(?m)\n?\s*` + key + `\s*=\s*\(\s*\);\s*\n?`)
+		re := regexp.MustCompile(`(?ms)\n[ \t]*` + key + ` = \(\s*\n[ \t]*\);\n`)
 		src = re.ReplaceAllString(src, "\n")
 	}
+	src = regexp.MustCompile(`\(\n(?:[ \t]*\n)+([ \t]*\);)`).ReplaceAllString(src, "(\n$1")
+	src = regexp.MustCompile(`\n{2,}(/\* End [^\n]+ section \*/)`).ReplaceAllString(src, "\n$1")
+	src = regexp.MustCompile(`(/\* End [^\n]+ section \*/)\n[ \t]*\n(\t\};)`).ReplaceAllString(src, "$1\n$2")
+	src = regexp.MustCompile(`(?m)\n[ \t]*\n([ \t]*\};)`).ReplaceAllString(src, "\n$1")
+	src = regexp.MustCompile(`(?m)\n[ \t]*\n(\t\};\n\trootObject = )`).ReplaceAllString(src, "\n$1")
+	src = regexp.MustCompile(`\n{3,}`).ReplaceAllString(src, "\n\n")
+	src = regexp.MustCompile(`(?m)^};\n(/\* End [^\n]+ section \*/)`).ReplaceAllString(src, "\t\t};\n$1")
+	src = strings.ReplaceAll(src, "\n\n\t};\n\trootObject = ", "\n\t};\n\trootObject = ")
+	src = strings.ReplaceAll(src, "\n};\n\trootObject = ", "\n\t};\n\trootObject = ")
 	return src
 }

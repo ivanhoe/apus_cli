@@ -68,22 +68,28 @@ func InjectApus(filePath string) error {
 		return fmt.Errorf("read entry file: %w", err)
 	}
 	src := string(raw)
+	hasImport := strings.Contains(src, "import Apus")
+	hasStart := strings.Contains(src, "Apus.shared.start(")
 
 	// ── Idempotency check ──
-	if strings.Contains(src, "import Apus") {
-		return nil // already injected
+	if hasImport && hasStart {
+		return nil
 	}
 
 	// ── 1. Add import block after the last `import` line ──
-	src, err = injectImport(src)
-	if err != nil {
-		return err
+	if !hasImport {
+		src, err = injectImport(src)
+		if err != nil {
+			return err
+		}
 	}
 
 	// ── 2. Inject Apus.shared.start() ──
-	src, err = injectStart(src)
-	if err != nil {
-		return err
+	if !hasStart {
+		src, err = injectStart(src)
+		if err != nil {
+			return err
+		}
 	}
 
 	return os.WriteFile(filePath, []byte(src), 0o644)
@@ -201,8 +207,8 @@ func UninjectApus(filePath string) error {
 	}
 	src := string(raw)
 
-	if !strings.Contains(src, "import Apus") {
-		return nil // nothing to remove
+	if !strings.Contains(src, "import Apus") && !strings.Contains(src, "Apus.shared.start(") {
+		return nil
 	}
 
 	// Remove import block: `#if DEBUG\nimport Apus\n#endif`
@@ -246,9 +252,13 @@ func removeStartCall(src string) string {
 
 // removeEmptyInit removes an init() {} block that has an empty body (whitespace only).
 var emptyInitPattern = regexp.MustCompile(`(?m)\n?[ \t]*(override[ \t]+)?init\(\)[ \t]*\{[ \t]*\n?[ \t]*\}[ \t]*\n?`)
+var synthesizedEmptyInitBeforeBodyPattern = regexp.MustCompile(`(?m)\n[ \t]*init\(\)[ \t]*\{\s*\n[ \t]*\}\n\n([ \t]*var body)`)
+var blankLineAfterTypeBracePattern = regexp.MustCompile(`\{\n(?:[ \t]*\n)+([ \t]*(?:var|let|func|override|init|@))`)
 
 func removeEmptyInit(src string) string {
-	return emptyInitPattern.ReplaceAllString(src, "\n")
+	src = synthesizedEmptyInitBeforeBodyPattern.ReplaceAllString(src, "\n$1")
+	src = emptyInitPattern.ReplaceAllString(src, "\n")
+	return blankLineAfterTypeBracePattern.ReplaceAllString(src, "{\n$1")
 }
 
 // collapseBlankLines collapses 3+ consecutive blank lines into 2.

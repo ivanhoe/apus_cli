@@ -168,6 +168,64 @@ struct MyApp: App {
 	}
 }
 
+func TestInjectApus_RepairsMissingStart(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	content := `import SwiftUI
+#if DEBUG
+import Apus
+#endif
+
+@main
+struct MyApp: App {
+    var body: some Scene { WindowGroup { Text("Hi") } }
+}`
+	os.WriteFile(file, []byte(content), 0o644)
+
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	src := string(data)
+	if strings.Count(src, "import Apus") != 1 {
+		t.Fatalf("expected a single import Apus block:\n%s", src)
+	}
+	if !strings.Contains(src, "Apus.shared.start(interceptNetwork: true)") {
+		t.Fatalf("expected missing start() to be repaired:\n%s", src)
+	}
+}
+
+func TestInjectApus_RepairsMissingImport(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	content := `import SwiftUI
+
+@main
+struct MyApp: App {
+    init() {
+        #if DEBUG
+        Apus.shared.start(interceptNetwork: true)
+        #endif
+    }
+    var body: some Scene { WindowGroup { Text("Hi") } }
+}`
+	os.WriteFile(file, []byte(content), 0o644)
+
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	src := string(data)
+	if !strings.Contains(src, "import Apus") {
+		t.Fatalf("expected missing import to be repaired:\n%s", src)
+	}
+	if strings.Count(src, "Apus.shared.start(interceptNetwork: true)") != 1 {
+		t.Fatalf("expected a single start() call:\n%s", src)
+	}
+}
+
 func TestInjectApus_NoImports(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "NoImports.swift")
@@ -208,6 +266,25 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 	if !strings.Contains(src, "import Apus") {
 		t.Fatalf("expected import Apus:\n%s", src)
+	}
+}
+
+func TestUninjectApus_UIApplicationMainSynthesizedInitRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "AppDelegate.swift")
+	original := "import UIKit\n\n@UIApplicationMain\nfinal class AppDelegate: UIResponder, UIApplicationDelegate {\n    var window: UIWindow?\n\n    func application(\n        _ application: UIApplication,\n        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil\n    ) -> Bool {\n        true\n    }\n}\n"
+	os.WriteFile(file, []byte(original), 0o644)
+
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	if string(data) != original {
+		t.Fatalf("expected UIApplicationMain roundtrip to restore original file.\nwant:\n%s\n\ngot:\n%s", original, string(data))
 	}
 }
 
@@ -260,6 +337,33 @@ func TestUninjectApus_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestUninjectApus_RemovesStartWithoutImport(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	content := `import SwiftUI
+
+@main
+struct MyApp: App {
+    init() {
+        #if DEBUG
+        Apus.shared.start(interceptNetwork: true)
+        #endif
+    }
+    var body: some Scene { WindowGroup { Text("Hi") } }
+}`
+	os.WriteFile(file, []byte(content), 0o644)
+
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	src := string(data)
+	if strings.Contains(src, "Apus.shared.start") {
+		t.Fatalf("expected start() to be removed even without import:\n%s", src)
+	}
+}
+
 func TestUninjectApus_SynthesizedInit(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "MyApp.swift")
@@ -283,6 +387,9 @@ func TestUninjectApus_SynthesizedInit(t *testing.T) {
 	}
 	if strings.Contains(src, "import Apus") {
 		t.Fatalf("UninjectApus should remove import Apus:\n%s", src)
+	}
+	if src != content {
+		t.Fatalf("expected synthesized init roundtrip to restore original file.\nwant:\n%s\n\ngot:\n%s", content, src)
 	}
 }
 

@@ -14,7 +14,7 @@ func TestRemoveAgentsMD(t *testing.T) {
 
 	// Write an Apus-generated AGENTS.md
 	agentsPath := filepath.Join(dir, "AGENTS.md")
-	os.WriteFile(agentsPath, []byte("# AGENTS.md\nApus runs at localhost:9847\n"), 0o644)
+	os.WriteFile(agentsPath, []byte(managedAgentsMarker+"\n# AGENTS.md\n"), 0o644)
 
 	if err := removeAgentsMD(dir); err != nil {
 		t.Fatalf("removeAgentsMD() error: %v", err)
@@ -37,6 +37,26 @@ func TestRemoveAgentsMD_NotOurs(t *testing.T) {
 	}
 
 	// Should NOT delete a non-Apus AGENTS.md
+	data, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("AGENTS.md should still exist: %v", err)
+	}
+	if string(data) != content {
+		t.Fatalf("AGENTS.md content should be unchanged")
+	}
+}
+
+func TestRemoveAgentsMD_CustomFileMentioningApus(t *testing.T) {
+	dir := t.TempDir()
+
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	content := "# AGENTS.md\nNotes:\n- Apus runs at http://localhost:9847/mcp when debugging.\n"
+	os.WriteFile(agentsPath, []byte(content), 0o644)
+
+	if err := removeAgentsMD(dir); err != nil {
+		t.Fatalf("removeAgentsMD() error: %v", err)
+	}
+
 	data, err := os.ReadFile(agentsPath)
 	if err != nil {
 		t.Fatalf("AGENTS.md should still exist: %v", err)

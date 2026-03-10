@@ -5,6 +5,7 @@ dist/
 # Go
 *.test
 *.out
+.gocache/
 
 # macOS
 .DS_Store
@@ -13,3 +14,6 @@ dist/
 .idea/
 .vscode/
 *.swp
+
+# Local validation artifacts
+.tmp/

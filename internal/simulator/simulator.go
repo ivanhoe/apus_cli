@@ -214,7 +214,7 @@ func OpenSimulatorApp() error {
 
 // WaitForMCPReady polls the given URL until the server responds or timeout elapses.
 func WaitForMCPReady(url string, timeout time.Duration) error {
-	return waitForHTTPReady(url, timeout, mcpPollInterval)
+	return waitForMCPReady(url, timeout, mcpPollInterval)
 }
 
 func runSimctl(timeout time.Duration, env map[string]string, args ...string) (string, error) {
@@ -257,7 +257,7 @@ func deviceState(udid string) (string, error) {
 	return "", fmt.Errorf("device %s not found", udid)
 }
 
-func waitForHTTPReady(url string, timeout, interval time.Duration) error {
+func waitForMCPReady(url string, timeout, interval time.Duration) error {
 	if strings.TrimSpace(url) == "" {
 		return fmt.Errorf("URL is empty")
 	}
@@ -271,23 +271,27 @@ func waitForHTTPReady(url string, timeout, interval time.Duration) error {
 	client := &http.Client{Timeout: 1200 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
 	var lastFailure error
+	const requestBody = `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
 
 	for time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+		req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(requestBody))
 		if err != nil {
 			return fmt.Errorf("create request: %w", err)
 		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 
 		resp, err := client.Do(req)
 		if err == nil {
-			// Drain body to allow connection reuse; errors are harmless in a poll loop.
-			_, _ = io.Copy(io.Discard, resp.Body)
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 			_ = resp.Body.Close()
-
-			if resp.StatusCode < 500 {
+			if readErr != nil {
+				lastFailure = fmt.Errorf("read response body: %w", readErr)
+			} else if looksLikeMCPResponse(resp.StatusCode, body) {
 				return nil
+			} else {
+				lastFailure = fmt.Errorf("received HTTP %d from %s", resp.StatusCode, url)
 			}
-			lastFailure = fmt.Errorf("received HTTP %d", resp.StatusCode)
 		} else {
 			lastFailure = err
 		}
@@ -299,4 +303,25 @@ func waitForHTTPReady(url string, timeout, interval time.Duration) error {
 		return fmt.Errorf("endpoint %s not ready after %s: %v", url, timeout, lastFailure)
 	}
 	return fmt.Errorf("endpoint %s not ready after %s", url, timeout)
+}
+
+func looksLikeMCPResponse(statusCode int, body []byte) bool {
+	if statusCode < 200 || statusCode >= 300 {
+		return false
+	}
+
+	var payload struct {
+		JSONRPC string          `json:"jsonrpc"`
+		Result  json.RawMessage `json:"result"`
+		Error   json.RawMessage `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+
+	if payload.JSONRPC != "2.0" {
+		return false
+	}
+
+	return len(payload.Result) > 0 || len(payload.Error) > 0
 }

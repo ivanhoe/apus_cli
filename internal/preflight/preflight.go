@@ -1,6 +1,7 @@
 package preflight
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -57,10 +58,14 @@ func Run(scope Scope) Report {
 	}
 
 	if scope == ScopeNew || scope == ScopeDoctor {
+		xcrunCheck := checkBinary("xcrun", "Install Xcode command line tools.")
 		checks = append(checks,
-			checkBinary("xcrun", "Install Xcode command line tools."),
+			xcrunCheck,
 			checkBinary("xcodegen", "Install xcodegen manually: brew install xcodegen."),
 		)
+		if xcrunCheck.OK {
+			checks = append(checks, checkAvailableIPhoneSimulator())
+		}
 	}
 
 	return Report{Checks: checks}
@@ -98,4 +103,43 @@ func checkXcodeSelect() Check {
 		}
 	}
 	return Check{Name: "xcode-select", OK: true}
+}
+
+func checkAvailableIPhoneSimulator() Check {
+	out, err := runCombinedOutputFn("xcrun", "simctl", "list", "devices", "available", "--json")
+	if err != nil {
+		return Check{
+			Name: "simulator:iphone",
+			OK:   false,
+			Hint: "Open Xcode > Settings > Platforms and install an iOS Simulator runtime.",
+		}
+	}
+
+	var result struct {
+		Devices map[string][]struct {
+			Name        string `json:"name"`
+			IsAvailable bool   `json:"isAvailable"`
+		} `json:"devices"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil {
+		return Check{
+			Name: "simulator:iphone",
+			OK:   false,
+			Hint: "Could not parse `xcrun simctl list` output. Reinstall Xcode command line tools if this persists.",
+		}
+	}
+
+	for _, devices := range result.Devices {
+		for _, device := range devices {
+			if device.IsAvailable && strings.Contains(device.Name, "iPhone") {
+				return Check{Name: "simulator:iphone", OK: true}
+			}
+		}
+	}
+
+	return Check{
+		Name: "simulator:iphone",
+		OK:   false,
+		Hint: "No iPhone simulator is available. Install one from Xcode > Settings > Platforms.",
+	}
 }

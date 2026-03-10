@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -35,7 +34,9 @@ func init() {
 // Execute is the entry point called from main.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		if shouldPrintError(err) {
+			_, _ = os.Stderr.WriteString(err.Error() + "\n")
+		}
 		os.Exit(1)
 	}
 }

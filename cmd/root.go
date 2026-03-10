@@ -16,7 +16,8 @@ var rootCmd = &cobra.Command{
 
   apus doctor      — verify your local toolchain first
   apus new MyApp   — create a new SwiftUI project with Apus pre-integrated
-  apus init        — best-effort add Apus to an existing Xcode project`,
+  apus init        — best-effort add Apus to an existing Xcode project
+  apus remove      — remove Apus from an existing Xcode project`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -26,6 +27,7 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(newCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(removeCmd)
 }
 
 // Execute is the entry point called from main.

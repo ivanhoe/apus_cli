@@ -79,6 +79,14 @@ func InitSuccess(projectName string) {
 	fmt.Println()
 }
 
+// RemoveSuccess prints success for apus remove.
+func RemoveSuccess(projectName string) {
+	fmt.Println()
+	bold.Println("Done.")
+	fmt.Printf("Apus has been removed from %s.\n", projectName)
+	fmt.Println()
+}
+
 // Fatal prints an error and hints, does NOT call os.Exit (let caller decide).
 func Fatal(msg string, err error) {
 	fmt.Println()

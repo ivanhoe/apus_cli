@@ -192,6 +192,72 @@ func findStructBodyBrace(src string) int {
 	return mainIdx + declIdx + braceIdx + 1
 }
 
+// UninjectApus removes the Apus import and start() call from a Swift file.
+// It is idempotent — calling it on a file without Apus integration is a no-op.
+func UninjectApus(filePath string) error {
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read entry file: %w", err)
+	}
+	src := string(raw)
+
+	if !strings.Contains(src, "import Apus") {
+		return nil // nothing to remove
+	}
+
+	// Remove import block: `#if DEBUG\nimport Apus\n#endif`
+	src = removeImportBlock(src)
+
+	// Remove start call: `#if DEBUG\nApus.shared.start(...)\n#endif`
+	src = removeStartCall(src)
+
+	// Remove synthesized empty init() if it now has no body
+	src = removeEmptyInit(src)
+
+	// Collapse 3+ consecutive blank lines to 2
+	src = collapseBlankLines(src)
+
+	return os.WriteFile(filePath, []byte(src), 0o644)
+}
+
+// removeImportBlock removes `#if DEBUG / import Apus / #endif` or bare `import Apus`.
+func removeImportBlock(src string) string {
+	// Wrapped form
+	re := regexp.MustCompile(`(?m)\n?^[ \t]*#if DEBUG\n[ \t]*import Apus\n[ \t]*#endif\n?`)
+	if re.MatchString(src) {
+		return re.ReplaceAllString(src, "\n")
+	}
+	// Bare form
+	re = regexp.MustCompile(`(?m)\n?^[ \t]*import Apus\n?`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+// removeStartCall removes `#if DEBUG / Apus.shared.start(...) / #endif` or bare start call.
+func removeStartCall(src string) string {
+	// Wrapped form (multiline)
+	re := regexp.MustCompile(`(?m)\n?[ \t]*#if DEBUG\n[ \t]*Apus\.shared\.start\([^)]*\)\n[ \t]*#endif\n?`)
+	if re.MatchString(src) {
+		return re.ReplaceAllString(src, "\n")
+	}
+	// Bare form
+	re = regexp.MustCompile(`(?m)\n?[ \t]*Apus\.shared\.start\([^)]*\)\n?`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+// removeEmptyInit removes an init() {} block that has an empty body (whitespace only).
+var emptyInitPattern = regexp.MustCompile(`(?m)\n?[ \t]*(override[ \t]+)?init\(\)[ \t]*\{[ \t]*\n?[ \t]*\}[ \t]*\n?`)
+
+func removeEmptyInit(src string) string {
+	return emptyInitPattern.ReplaceAllString(src, "\n")
+}
+
+// collapseBlankLines collapses 3+ consecutive blank lines into 2.
+var multiBlankLines = regexp.MustCompile(`\n{3,}`)
+
+func collapseBlankLines(src string) string {
+	return multiBlankLines.ReplaceAllString(src, "\n\n")
+}
+
 func findMainAttributeIndex(src string) int {
 	mainIdx := strings.Index(src, "@main")
 	uiAppMainIdx := strings.Index(src, "@UIApplicationMain")

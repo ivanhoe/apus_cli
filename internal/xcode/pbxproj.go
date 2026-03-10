@@ -575,3 +575,109 @@ func addToBuildPhase(src, targetName, buildUUID string) (string, error) {
 
 	return src[:phaseIdx] + newPhaseSection + src[phaseIdx+phaseEnd+2:], nil
 }
+
+// ── Removal helpers ───────────────────────────────────────────────────────
+
+// RemoveApusDependency removes all Apus Swift Package references from the .pbxproj file.
+// It is idempotent — returns nil without modifying the file if Apus is not present.
+func RemoveApusDependency(projPath string, target string) error {
+	pbxPath, err := pbxprojPath(projPath)
+	if err != nil {
+		return err
+	}
+
+	raw, err := os.ReadFile(pbxPath)
+	if err != nil {
+		return fmt.Errorf("read pbxproj: %w", err)
+	}
+	src := string(raw)
+
+	if !strings.Contains(src, apusRepoURL) {
+		return nil // Apus not present
+	}
+
+	remoteUUID, err := findApusRemoteRefUUID(src)
+	if err != nil {
+		return fmt.Errorf("find Apus remote ref: %w", err)
+	}
+
+	depUUID := findApusProductDependencyUUID(src, remoteUUID)
+	var buildUUID string
+	if depUUID != "" {
+		buildUUID = findApusBuildFileUUID(src, depUUID)
+	}
+
+	// Remove in reverse order of insertion
+	if buildUUID != "" {
+		src = removeFromBuildPhaseFiles(src, buildUUID)
+		src = removeBuildFileEntry(src, buildUUID)
+	}
+
+	if depUUID != "" {
+		src = removeFromTargetProductDeps(src, target, depUUID)
+		src = removeProductDependencyEntry(src, depUUID)
+	}
+
+	src = removeFromPackageRefsList(src, remoteUUID)
+	src = removeRemotePackageRefEntry(src, remoteUUID)
+
+	// Also remove any local Apus references
+	for _, localUUID := range findLocalApusRefUUIDs(src) {
+		src = replaceLocalApusPackageLine(src, localUUID, remoteUUID)
+		src = removeLocalApusPackageReferenceLine(src, localUUID)
+		src = removeLocalApusReferenceObject(src, localUUID)
+	}
+
+	src = cleanupEmptySections(src)
+	src = cleanupEmptyLists(src)
+
+	return os.WriteFile(pbxPath, []byte(src), 0o644)
+}
+
+func removeFromBuildPhaseFiles(src, buildUUID string) string {
+	re := regexp.MustCompile(`\n?\s*` + buildUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/,[ \t]*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func removeBuildFileEntry(src, buildUUID string) string {
+	re := regexp.MustCompile(`\n?\s*` + buildUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` in Frameworks \*/ = \{[^}]+\};[ \t]*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func removeFromTargetProductDeps(src, targetName, depUUID string) string {
+	re := regexp.MustCompile(`\n?\s*` + depUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` \*/,[ \t]*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func removeProductDependencyEntry(src, depUUID string) string {
+	// Use \n\t\t}; to match the 2-tab-indented closing brace (not nested ones)
+	re := regexp.MustCompile(`(?s)\n?\s*` + depUUID + ` /\* ` + regexp.QuoteMeta(apusProduct) + ` \*/ = \{\s*isa = XCSwiftPackageProductDependency;.*?\n\t\t\};[ \t]*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func removeFromPackageRefsList(src, remoteUUID string) string {
+	re := regexp.MustCompile(`\n?\s*` + remoteUUID + ` /\* XCRemoteSwiftPackageReference "` + regexp.QuoteMeta(apusProduct) + `" \*/,[ \t]*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func removeRemotePackageRefEntry(src, remoteUUID string) string {
+	// Use \n\t\t}; to match the 2-tab-indented closing brace (not nested ones like requirement = {...};)
+	re := regexp.MustCompile(`(?s)\n?\s*` + remoteUUID + ` /\* XCRemoteSwiftPackageReference "` + regexp.QuoteMeta(apusProduct) + `" \*/ = \{\s*isa = XCRemoteSwiftPackageReference;.*?\n\t\t\};[ \t]*`)
+	return re.ReplaceAllString(src, "\n")
+}
+
+func cleanupEmptySections(src string) string {
+	for _, section := range []string{"XCRemoteSwiftPackageReference", "XCSwiftPackageProductDependency"} {
+		re := regexp.MustCompile(`(?s)\n?/\* Begin ` + section + ` section \*/\s*/\* End ` + section + ` section \*/\n?`)
+		src = re.ReplaceAllString(src, "\n")
+	}
+	return src
+}
+
+func cleanupEmptyLists(src string) string {
+	for _, key := range []string{"packageReferences", "packageProductDependencies"} {
+		re := regexp.MustCompile(`(?m)\n?\s*` + key + `\s*=\s*\(\s*\);\s*\n?`)
+		src = re.ReplaceAllString(src, "\n")
+	}
+	return src
+}

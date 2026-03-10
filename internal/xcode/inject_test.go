@@ -226,6 +226,103 @@ func TestInjectImport(t *testing.T) {
 	}
 }
 
+func TestUninjectApus_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	original := "import SwiftUI\n\n@main\nstruct MyApp: App {\n    init() {\n        print(\"setup\")\n    }\n    var body: some Scene { WindowGroup { Text(\"Hi\") } }\n}\n"
+	os.WriteFile(file, []byte(original), 0o644)
+
+	// Inject
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+	data, _ := os.ReadFile(file)
+	if !strings.Contains(string(data), "import Apus") {
+		t.Fatalf("InjectApus should add import Apus")
+	}
+
+	// Uninject
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+	data, _ = os.ReadFile(file)
+	src := string(data)
+
+	if strings.Contains(src, "import Apus") {
+		t.Fatalf("UninjectApus should remove import Apus:\n%s", src)
+	}
+	if strings.Contains(src, "Apus.shared.start") {
+		t.Fatalf("UninjectApus should remove Apus.shared.start:\n%s", src)
+	}
+	// Original init with print("setup") should remain
+	if !strings.Contains(src, "print(\"setup\")") {
+		t.Fatalf("UninjectApus should preserve existing init body:\n%s", src)
+	}
+}
+
+func TestUninjectApus_SynthesizedInit(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	// No init — InjectApus will synthesize one
+	content := "import SwiftUI\n\n@main\nstruct MyApp: App {\n    var body: some Scene { WindowGroup { Text(\"Hi\") } }\n}\n"
+	os.WriteFile(file, []byte(content), 0o644)
+
+	if err := InjectApus(file); err != nil {
+		t.Fatalf("InjectApus() error: %v", err)
+	}
+
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	src := string(data)
+
+	if strings.Contains(src, "init()") {
+		t.Fatalf("UninjectApus should remove synthesized empty init:\n%s", src)
+	}
+	if strings.Contains(src, "import Apus") {
+		t.Fatalf("UninjectApus should remove import Apus:\n%s", src)
+	}
+}
+
+func TestUninjectApus_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	content := "import SwiftUI\n\n@main\nstruct MyApp: App {\n    var body: some Scene { WindowGroup { Text(\"Hi\") } }\n}\n"
+	os.WriteFile(file, []byte(content), 0o644)
+
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() on non-Apus file error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	if string(data) != content {
+		t.Fatalf("UninjectApus should be a no-op on file without Apus:\ngot: %s\nwant: %s", string(data), content)
+	}
+}
+
+func TestUninjectApus_BareImport(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "MyApp.swift")
+	// Bare import (no #if DEBUG wrapper)
+	content := "import SwiftUI\nimport Apus\n\n@main\nstruct MyApp: App {\n    init() {\n        Apus.shared.start()\n    }\n    var body: some Scene { WindowGroup { Text(\"Hi\") } }\n}\n"
+	os.WriteFile(file, []byte(content), 0o644)
+
+	if err := UninjectApus(file); err != nil {
+		t.Fatalf("UninjectApus() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(file)
+	src := string(data)
+	if strings.Contains(src, "import Apus") {
+		t.Fatalf("should remove bare import Apus:\n%s", src)
+	}
+	if strings.Contains(src, "Apus.shared.start") {
+		t.Fatalf("should remove Apus.shared.start:\n%s", src)
+	}
+}
+
 func TestFindInit(t *testing.T) {
 	cases := []struct {
 		name string

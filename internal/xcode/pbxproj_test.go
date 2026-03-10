@@ -292,6 +292,145 @@ func TestPbxprojPath_NoPbxproj(t *testing.T) {
 	}
 }
 
+func TestRemoveApusDependency(t *testing.T) {
+	remoteUUID := "AAAAAAAAAAAAAAAAAAAAAAAA"
+	depUUID := "BBBBBBBBBBBBBBBBBBBBBBBB"
+	buildUUID := "CCCCCCCCCCCCCCCCCCCCCCCC"
+	frameworksUUID := "DDDDDDDDDDDDDDDDDDDDDDDD"
+	projectUUID := "EEEEEEEEEEEEEEEEEEEEEEEE"
+	targetUUID := "FFFFFFFFFFFFFFFFFFFFFFFF"
+
+	pbxproj := `// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		` + buildUUID + ` /* Apus in Frameworks */ = {isa = PBXBuildFile; productRef = ` + depUUID + ` /* Apus */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		` + frameworksUUID + ` /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				` + buildUUID + ` /* Apus in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		` + targetUUID + ` /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildPhases = (
+				` + frameworksUUID + ` /* Frameworks */,
+			);
+			name = MyApp;
+			packageProductDependencies = (
+				` + depUUID + ` /* Apus */,
+			);
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		` + projectUUID + ` /* Project object */ = {
+			isa = PBXProject;
+			targets = (
+				` + targetUUID + ` /* MyApp */,
+			);
+			packageReferences = (
+				` + remoteUUID + ` /* XCRemoteSwiftPackageReference "Apus" */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		` + remoteUUID + ` /* XCRemoteSwiftPackageReference "Apus" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ivanhoe/apus";
+			requirement = {
+				kind = branch;
+				branch = main;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		` + depUUID + ` /* Apus */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ` + remoteUUID + ` /* XCRemoteSwiftPackageReference "Apus" */;
+			productName = Apus;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = ` + projectUUID + ` /* Project object */;
+}
+`
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	os.MkdirAll(projDir, 0o755)
+	pbxFile := filepath.Join(projDir, "project.pbxproj")
+	os.WriteFile(pbxFile, []byte(pbxproj), 0o644)
+
+	if err := RemoveApusDependency(projDir, "MyApp"); err != nil {
+		t.Fatalf("RemoveApusDependency() error: %v", err)
+	}
+
+	data, _ := os.ReadFile(pbxFile)
+	result := string(data)
+
+	// Verify all Apus references are gone
+	for _, needle := range []string{
+		"ivanhoe/apus",
+		"XCRemoteSwiftPackageReference",
+		"XCSwiftPackageProductDependency",
+		"Apus in Frameworks",
+		remoteUUID,
+		depUUID,
+		buildUUID,
+	} {
+		if strings.Contains(result, needle) {
+			t.Fatalf("expected %q to be removed from pbxproj:\n%s", needle, result)
+		}
+	}
+
+	// Verify the file is structurally sound (has key markers)
+	for _, marker := range []string{"rootObject", "objects = {"} {
+		if !strings.Contains(result, marker) {
+			t.Fatalf("expected %q to remain in pbxproj", marker)
+		}
+	}
+}
+
+func TestRemoveApusDependency_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, "MyApp.xcodeproj")
+	os.MkdirAll(projDir, 0o755)
+	pbxFile := filepath.Join(projDir, "project.pbxproj")
+	content := `// !$*UTF8*$!
+{
+	objects = {
+	};
+	rootObject = AAAA;
+}
+`
+	os.WriteFile(pbxFile, []byte(content), 0o644)
+
+	if err := RemoveApusDependency(projDir, "MyApp"); err != nil {
+		t.Fatalf("RemoveApusDependency() on non-Apus project error: %v", err)
+	}
+
+	data, _ := os.ReadFile(pbxFile)
+	if string(data) != content {
+		t.Fatalf("expected no changes on project without Apus")
+	}
+}
+
 func TestPbxprojPath_NoXcodeproj(t *testing.T) {
 	dir := t.TempDir()
 

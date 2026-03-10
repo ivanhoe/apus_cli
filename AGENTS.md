@@ -2,11 +2,11 @@
 
 ## What is this repo
 
-Go CLI that eliminates onboarding friction for [Apus](https://github.com/ivanhoe/apus) — the runtime MCP debug server for iOS apps.
+Go CLI that eliminates onboarding friction for the [Apus runtime](https://github.com/ivanhoe/apus) — the MCP debug server embedded in iOS apps.
 
 ```bash
 apus new MyApp   # scaffold + build + launch in one command
-apus init        # add Apus to an existing Xcode project
+apus init        # add the Apus runtime to an existing Xcode project
 ```
 
 ## Repository layout
@@ -89,7 +89,7 @@ git tag v0.x.0 && git push --tags
 
 ## Apus MCP reference (for context)
 
-The CLI integrates with Apus which runs at `http://localhost:9847/mcp` inside the target iOS app.
+The CLI integrates the Apus runtime, which runs at `http://localhost:9847/mcp` inside the target iOS app.
 Key tools: `get_logs`, `get_screenshot`, `get_view_hierarchy`, `ui_interact`, `get_network_history`, `hot_reload`.
 
 ## Working Memory (2026-03-04)

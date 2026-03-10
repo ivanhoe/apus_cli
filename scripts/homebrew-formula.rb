@@ -1,7 +1,7 @@
 # This file is a template. The release workflow replaces VERSION and SHA256
 # values, then pushes the result to ivanhoe/homebrew-tap as Formula/apus.rb.
 class Apus < Formula
-  desc "CLI to integrate the Apus MCP debug server into iOS projects"
+  desc "CLI for integrating the Apus runtime into iOS projects"
   homepage "https://github.com/ivanhoe/apus_cli"
   version "VERSION"
   license "Apache-2.0"

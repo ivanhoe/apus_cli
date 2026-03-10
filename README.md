@@ -1,6 +1,6 @@
 # apus
 
-`apus` integrates [Apus](https://github.com/ivanhoe/apus) into iOS apps so AI agents can talk to a live MCP server running inside your simulator app.
+`apus` is the CLI for integrating the [Apus runtime](https://github.com/ivanhoe/apus) into iOS apps so AI agents can talk to a live MCP server running inside your simulator app.
 
 Use it when you want a repeatable path from Xcode project to:
 
@@ -14,9 +14,9 @@ Use it when you want a repeatable path from Xcode project to:
 ## What `apus` does
 
 - `apus doctor` checks whether your machine and project are safe to use with `apus`
-- `apus new` scaffolds a SwiftUI app, builds it, launches it, and waits for MCP
-- `apus init` best-effort integrates Apus into an existing Xcode project
-- `apus status` shows whether Apus is already integrated
+- `apus new` scaffolds a SwiftUI app with the Apus runtime pre-integrated, builds it, launches it, and waits for MCP
+- `apus init` best-effort integrates the Apus runtime into an existing Xcode project
+- `apus status` shows whether the Apus runtime is already integrated
 - `apus remove` reverses what `apus init` added
 
 ## Requirements
@@ -68,7 +68,7 @@ apus status --path /path/to/project --target MyApp
 What `apus init` will try to do:
 
 1. modify `project.pbxproj` to add the Apus Swift Package dependency
-2. resolve Swift Package dependencies when Apus is new to the project
+2. resolve Swift Package dependencies when the Apus runtime is new to the project
 3. inject `import Apus` and `Apus.shared.start()` when it can detect the app entry point
 4. create `AGENTS.md` if the project does not already have one
 5. create backups of touched files before mutating
@@ -125,7 +125,7 @@ apus doctor --json --path /path/to/project
 
 ### `apus new <AppName>`
 
-Creates a new SwiftUI app with Apus pre-integrated, builds it, launches it, and waits for MCP.
+Creates a new SwiftUI app with the Apus runtime pre-integrated, builds it, launches it, and waits for MCP.
 
 ```bash
 apus new MyApp
@@ -191,7 +191,7 @@ The current validation corpus lives in [`fixtures/matrix.json`](./fixtures/matri
 
 ## How It Works
 
-1. `apus new` or `apus init` prepares the project for Apus.
+1. `apus new` or `apus init` prepares the project for the Apus runtime.
 2. You build and run the app in the simulator.
 3. Apus serves MCP over `http://localhost:9847/mcp` by default.
 4. Your AI agent connects there to inspect logs, network, views, screenshots, and hot-reload changes.

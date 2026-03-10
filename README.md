@@ -1,124 +1,197 @@
 # apus
 
-CLI to integrate [Apus](https://github.com/ivanhoe/apus) into iOS projects. Apus embeds an MCP debug server in your app so AI agents (Claude Code, Cursor, Copilot) can inspect and manipulate it at runtime.
+`apus` integrates [Apus](https://github.com/ivanhoe/apus) into iOS apps so AI agents can talk to a live MCP server running inside your simulator app.
+
+Use it when you want a repeatable path from Xcode project to:
+
+- runtime logs
+- screenshots
+- view hierarchy inspection
+- UI interaction
+- network history
+- hot reload
+
+## What `apus` does
+
+- `apus doctor` checks whether your machine and project are safe to use with `apus`
+- `apus new` scaffolds a SwiftUI app, builds it, launches it, and waits for MCP
+- `apus init` best-effort integrates Apus into an existing Xcode project
+- `apus status` shows whether Apus is already integrated
+- `apus remove` reverses what `apus init` added
+
+## Requirements
+
+- macOS
+- Xcode 15+ with command line tools
+- at least one iPhone simulator runtime installed
+- `xcodegen` in `PATH` for `apus new`
+- an `.xcodeproj` that `apus` can detect safely
+
+If your repo has multiple app targets, plan to pass `--target`.
 
 ## Install
 
 ```bash
-# Homebrew (coming soon)
-brew install ivanhoe/tap/apus
-
-# Or download the binary
+# Installer script
 curl -fsSL https://raw.githubusercontent.com/ivanhoe/apus_cli/main/scripts/install.sh | bash
 
-# Or build from source
+# Or build/install from source
 go install github.com/ivanhoe/apus_cli@latest
 ```
 
-## Commands
+After install:
+
+```bash
+apus --help
+apus doctor
+```
+
+## Quickstart: Existing Project
+
+```bash
+# 1) Inspect the repo first
+apus doctor --path /path/to/project
+
+# 2) If the repo has multiple app targets, choose one explicitly
+apus doctor --path /path/to/project --target MyApp
+
+# 3) Preview the exact mutations before writing
+apus init --path /path/to/project --target MyApp --dry-run
+
+# 4) Apply the integration
+apus init --path /path/to/project --target MyApp
+
+# 5) Confirm what is integrated
+apus status --path /path/to/project --target MyApp
+```
+
+What `apus init` will try to do:
+
+1. modify `project.pbxproj` to add the Apus Swift Package dependency
+2. resolve Swift Package dependencies when Apus is new to the project
+3. inject `import Apus` and `Apus.shared.start()` when it can detect the app entry point
+4. create `AGENTS.md` if the project does not already have one
+5. create backups of touched files before mutating
+
+## Quickstart: New Project
+
+```bash
+# 1) Verify your toolchain
+apus doctor
+
+# 2) Scaffold + build + launch a new SwiftUI app
+apus new MyApp
+
+# Optional: use a custom MCP port
+apus new MyApp --port 9999
+```
+
+`apus new` currently supports the `swiftui` template only.
+
+When it succeeds, `apus` prints the MCP URL to connect to, usually:
+
+```text
+http://localhost:9847/mcp
+```
+
+## `doctor` classifications
+
+`apus doctor` reports one of these classifications:
+
+- `supported`: safe happy path for `apus`
+- `risky`: the project may still work, but expect a manual step such as adding `Apus.shared.start()` yourself
+- `unsupported`: `apus` should stop before mutating files
+
+Recommended workflow:
+
+```bash
+apus doctor --path /path/to/project --target MyApp
+apus init --path /path/to/project --target MyApp --dry-run
+apus init --path /path/to/project --target MyApp
+```
+
+## Command Guide
 
 ### `apus doctor`
 
-Verify your local toolchain (Xcode, xcodebuild, xcodegen, etc.).
+Checks your machine and, optionally, a specific project.
 
 ```bash
 apus doctor
 apus doctor --path /path/to/project
-apus doctor --path /path/to/project --target MyAppBeta
+apus doctor --path /path/to/project --target MyApp
 apus doctor --json --path /path/to/project
 ```
 
 ### `apus new <AppName>`
 
-Create a new SwiftUI project with Apus pre-integrated, build it, launch it in the simulator, and verify MCP connectivity.
+Creates a new SwiftUI app with Apus pre-integrated, builds it, launches it, and waits for MCP.
 
 ```bash
 apus new MyApp
-apus new MyApp --port 9999   # custom MCP port for health check
+apus new MyApp --port 9999
 ```
 
 ### `apus init`
 
-Best-effort integration of Apus into an existing Xcode project. Backs up modified files before making changes.
+Best-effort integration for an existing Xcode project.
 
 ```bash
-cd /path/to/your/project
-apus init
-apus init --target MyAppBeta
-apus init --path /path/to/your/project
-apus init --dry-run
-apus init --dry-run --json --path /path/to/your/project
+apus init --path /path/to/project
+apus init --path /path/to/project --target MyApp
+apus init --path /path/to/project --dry-run
+apus init --path /path/to/project --dry-run --json
+apus init --path /path/to/project --package-path /path/to/local/apus
 ```
-
-This will:
-1. Add Apus as a Swift Package dependency in `.pbxproj`
-2. Resolve package dependencies
-3. Inject `Apus.shared.start()` in your app entry point
-4. Write an `AGENTS.md` with MCP tool reference
 
 ### `apus status`
 
-Check whether Apus is integrated in an existing Xcode project.
+Reports whether Apus is integrated and which components are present.
 
 ```bash
-apus status --path /path/to/your/project
-apus status --path /path/to/your/project --target MyAppBeta
-apus status --json --path /path/to/your/project
+apus status --path /path/to/project
+apus status --path /path/to/project --target MyApp
+apus status --json --path /path/to/project
 ```
 
 ### `apus remove`
 
-Remove Apus from an existing Xcode project (reverses `apus init`).
+Reverses `apus init`.
 
 ```bash
-cd /path/to/your/project
-apus remove
-apus remove --target MyAppBeta
-apus remove --path /path/to/your/project
-apus remove --dry-run --json --path /path/to/your/project
+apus remove --path /path/to/project
+apus remove --path /path/to/project --target MyApp
+apus remove --path /path/to/project --dry-run
+apus remove --path /path/to/project --dry-run --json
 ```
 
-This will:
-1. Remove `import Apus` and `Apus.shared.start()` from the app entry point
-2. Remove the Apus Swift Package dependency from `.pbxproj`
-3. Delete the `AGENTS.md` if it was generated by Apus
+## Connecting Your MCP Client
 
-## Requirements
+Once the app is running in the simulator, point your MCP-capable client at the URL printed by `apus`.
 
-- macOS
-- Xcode 15+ with command line tools (`xcode-select --install`)
-- [xcodegen](https://github.com/yonaskolb/XcodeGen) (for `apus new`)
+Default URL:
 
-## Fixture Matrix
-
-We track end-to-end coverage goals in [`fixtures/matrix.json`](./fixtures/matrix.json), split into
-`planned` and `ready` fixtures.
-
-```bash
-go run ./tools/fixturematrix validate
-go run ./tools/fixturematrix plan
-go build -o .tmp/bin/apus .
-go build -o .tmp/bin/fixturerunner ./tools/fixturerunner
-./.tmp/bin/fixturerunner -apus-bin ./.tmp/bin/apus -apus-package-path ../apus
-./.tmp/bin/fixturerunner -apus-bin ./.tmp/bin/apus -fixture open-source-swiftui-real
+```text
+http://localhost:9847/mcp
 ```
 
-## Release Smoke Test
+Start here:
 
-Every release build should validate the packaged binary against the smoke fixtures before publishing:
+- [MCP client integration guide](./docs/mcp-clients.md)
+- [Troubleshooting](./docs/troubleshooting.md)
 
-```bash
-go build -o .tmp/bin/fixturerunner ./tools/fixturerunner
-go build -o .tmp/bin/apus .
-APUS_PACKAGE_PATH=../apus ./scripts/release-smoke.sh ./.tmp/bin/apus
-```
+## Support Model
 
-## How it works
+Start with the support matrix before trying `apus init` on a new repo shape:
 
-1. **First time**: `apus new` or `apus init` sets up your project (requires Xcode installed)
-2. **After that**: build and run from any editor or CLI -- no need to keep Xcode open
-3. Apus MCP server runs at `http://localhost:9847/mcp` inside the simulator
-4. Your AI agent connects to inspect logs, network, views, take screenshots, and hot-reload Swift code
+- [Support matrix](./docs/support-matrix.md)
+- [Troubleshooting](./docs/troubleshooting.md)
+
+The current validation corpus lives in [`fixtures/matrix.json`](./fixtures/matrix.json) and includes both synthetic fixtures and pinned open-source repos.
+
+## For Maintainers
+
+Contributor and release workflow docs live in [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## License
 

@@ -87,6 +87,66 @@ func RemoveSuccess(projectName string) {
 	fmt.Println()
 }
 
+// StatusIntegrated prints the integration status when Apus is present.
+func StatusIntegrated(pbxproj, swift, agents bool) {
+	check := green.Sprint("✓")
+	cross := faint.Sprint("–")
+	fmt.Println("Apus integration:")
+	if pbxproj {
+		fmt.Printf("  %s SPM dependency in project.pbxproj\n", check)
+	} else {
+		fmt.Printf("  %s SPM dependency in project.pbxproj\n", cross)
+	}
+	if swift {
+		fmt.Printf("  %s import Apus + Apus.shared.start() in Swift code\n", check)
+	} else {
+		fmt.Printf("  %s import Apus + Apus.shared.start() in Swift code\n", cross)
+	}
+	if agents {
+		fmt.Printf("  %s AGENTS.md\n", check)
+	} else {
+		fmt.Printf("  %s AGENTS.md\n", cross)
+	}
+	fmt.Println()
+}
+
+// StatusNotIntegrated prints the status when Apus is not present.
+func StatusNotIntegrated() {
+	fmt.Printf("Apus is %s in this project.\n", bold.Sprint("not integrated"))
+	Info("Run `apus init` to add it.")
+	fmt.Println()
+}
+
+// DryRunHeader prints the dry-run banner.
+func DryRunHeader() {
+	yellow.Println("Dry run — no files will be modified.")
+	fmt.Println()
+}
+
+// DryRunItem prints a single dry-run action.
+func DryRunItem(action, file string) {
+	fmt.Printf("  %s %s\n", yellow.Sprint(action), file)
+}
+
+// Summary prints a post-execution summary of changed files.
+func Summary(changes []FileChange) {
+	if len(changes) == 0 {
+		return
+	}
+	fmt.Println()
+	faint.Println("Changes:")
+	for _, c := range changes {
+		faint.Printf("  %s %s (%s)\n", c.Action, c.File, c.Detail)
+	}
+}
+
+// FileChange describes a single file modification for the summary.
+type FileChange struct {
+	Action string // "modified", "created", "deleted"
+	File   string // relative path
+	Detail string // e.g. "+15 lines"
+}
+
 // Fatal prints an error and hints, does NOT call os.Exit (let caller decide).
 func Fatal(msg string, err error) {
 	fmt.Println()

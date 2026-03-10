@@ -16,6 +16,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var initDryRun bool
+
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Best-effort add Apus to an existing Xcode project (backs up files first)",
@@ -24,6 +26,10 @@ It currently works best with SwiftUI-style app entry files and standard Xcode la
 If preflight checks fail or injection cannot be performed safely, prefer manual integration.`,
 	Args: cobra.NoArgs,
 	RunE: runInit,
+}
+
+func init() {
+	initCmd.Flags().BoolVar(&initDryRun, "dry-run", false, "Show what would change without modifying any files")
 }
 
 func runInit(_ *cobra.Command, _ []string) error {
@@ -43,9 +49,15 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	terminal.Detected(filepath.Base(info.ProjectPath), info.Target+" (SwiftUI)")
+
+	// ── Dry run ──
+	if initDryRun {
+		return dryRunInit(cwd, info)
+	}
+
 	terminal.Info("`apus init` is best-effort and currently optimized for SwiftUI-style entry points.")
 	terminal.Info("A backup of modified files will be created before changes are applied.")
-	terminal.Detected(filepath.Base(info.ProjectPath), info.Target+" (SwiftUI)")
 
 	backup, err := createProjectBackup(cwd, backupCandidates(info))
 	if err != nil {
@@ -55,10 +67,12 @@ func runInit(_ *cobra.Command, _ []string) error {
 		terminal.Info("Backup created: " + backup.dir)
 	}
 
+	var changes []terminal.FileChange
 	p := terminal.NewProgress(4)
 
 	// ── Step 1: Modify .pbxproj ──
 	{
+		pbxBefore := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
 		done := p.Start("Adding Apus to project.pbxproj")
 		err = xcode.AddApusDependency(info.ProjectPath, info.Target)
 		done(err)
@@ -68,6 +82,10 @@ func runInit(_ *cobra.Command, _ []string) error {
 				return fmt.Errorf("pbxproj modification failed: %w (rollback failed: %v)", err, rollbackErr)
 			}
 			return fmt.Errorf("pbxproj modification failed; backed-up files restored: %w", err)
+		}
+		pbxAfter := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
+		if pbxAfter != pbxBefore {
+			changes = append(changes, terminal.FileChange{Action: "modified", File: "project.pbxproj", Detail: fmt.Sprintf("+%d bytes", pbxAfter-pbxBefore)})
 		}
 	}
 
@@ -106,6 +124,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 				terminal.Info("Add `Apus.shared.start()` manually in your App init()")
 			}
 		} else {
+			entryBefore := countLines(info.EntryFile)
 			err = xcode.InjectApus(info.EntryFile)
 			done(err)
 			if err != nil {
@@ -114,6 +133,10 @@ func runInit(_ *cobra.Command, _ []string) error {
 					return fmt.Errorf("swift injection failed: %w (rollback failed: %v)", err, rollbackErr)
 				}
 				return fmt.Errorf("swift injection failed; backed-up files restored (resolved packages may remain): %w", err)
+			}
+			entryAfter := countLines(info.EntryFile)
+			if entryAfter != entryBefore {
+				changes = append(changes, terminal.FileChange{Action: "modified", File: filepath.Base(info.EntryFile), Detail: fmt.Sprintf("+%d lines", entryAfter-entryBefore)})
 			}
 		}
 	}
@@ -126,10 +149,50 @@ func runInit(_ *cobra.Command, _ []string) error {
 		if err != nil {
 			terminal.Fatal("AGENTS.md write failed", err)
 			// Non-fatal
+		} else {
+			if _, statErr := os.Stat(filepath.Join(cwd, "AGENTS.md")); statErr == nil {
+				changes = append(changes, terminal.FileChange{Action: "created", File: "AGENTS.md", Detail: "MCP tool reference"})
+			}
 		}
 	}
 
+	terminal.Summary(changes)
 	terminal.InitSuccess(info.ProjectName)
+	return nil
+}
+
+func dryRunInit(cwd string, info *xcode.ProjectInfo) error {
+	terminal.DryRunHeader()
+
+	pbxPath := filepath.Join(info.ProjectPath, "project.pbxproj")
+	pbxRaw, _ := os.ReadFile(pbxPath)
+	if !strings.Contains(string(pbxRaw), "github.com/ivanhoe/apus") {
+		terminal.DryRunItem("would modify", "project.pbxproj (add Apus SPM dependency)")
+		terminal.DryRunItem("would run", "xcodebuild -resolvePackageDependencies")
+	} else {
+		terminal.DryRunItem("skip", "project.pbxproj (Apus already present)")
+	}
+
+	if info.EntryFile != "" {
+		entryRaw, _ := os.ReadFile(info.EntryFile)
+		if !strings.Contains(string(entryRaw), "import Apus") {
+			terminal.DryRunItem("would modify", filepath.Base(info.EntryFile)+" (inject import Apus + Apus.shared.start())")
+		} else {
+			terminal.DryRunItem("skip", filepath.Base(info.EntryFile)+" (already injected)")
+		}
+	} else {
+		terminal.DryRunItem("manual", "no entry file detected — you'll need to add Apus.shared.start() manually")
+	}
+
+	agentsPath := filepath.Join(cwd, "AGENTS.md")
+	if _, err := os.Stat(agentsPath); os.IsNotExist(err) {
+		terminal.DryRunItem("would create", "AGENTS.md")
+	} else {
+		terminal.DryRunItem("skip", "AGENTS.md (already exists)")
+	}
+
+	fmt.Println()
+	terminal.Info("Run `apus init` without --dry-run to apply these changes.")
 	return nil
 }
 
@@ -210,6 +273,22 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func readFileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
+func countLines(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "\n")
 }
 
 const agentsMDTemplate = `# AGENTS.md — {{ .ProjectName }}

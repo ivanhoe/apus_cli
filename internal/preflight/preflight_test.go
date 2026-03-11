@@ -184,3 +184,63 @@ func TestRunWithOptions_ProjectDetectionFailureYieldsUnsupportedClassification(t
 		t.Fatalf("expected project assessment to preserve directory")
 	}
 }
+
+func TestRunWithOptions_ReportsProgressMessages(t *testing.T) {
+	origLook := lookPathFn
+	origRun := runCombinedOutputFn
+	origDetect := detectProjectFn
+	t.Cleanup(func() {
+		lookPathFn = origLook
+		runCombinedOutputFn = origRun
+		detectProjectFn = origDetect
+	})
+
+	lookPathFn = func(name string) (string, error) { return "/usr/bin/" + name, nil }
+	runCombinedOutputFn = func(name string, args ...string) (string, error) {
+		if name == "xcrun" {
+			payload, err := json.Marshal(map[string]any{
+				"devices": map[string]any{
+					"com.apple.CoreSimulator.SimRuntime.iOS-18-0": []map[string]any{
+						{"name": "iPhone 16", "isAvailable": true},
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal simctl payload: %v", err)
+			}
+			return string(payload), nil
+		}
+		return "/Applications/Xcode.app/Contents/Developer", nil
+	}
+	detectProjectFn = func(dir, target string) (*xcode.ProjectInfo, error) {
+		return &xcode.ProjectInfo{
+			ProjectPath: "/tmp/Demo.xcodeproj",
+			ProjectName: "Demo",
+			Target:      "Demo",
+			EntryFile:   "/tmp/Demo.swift",
+			IsSwiftUI:   true,
+		}, nil
+	}
+
+	var progress []string
+	_ = RunWithOptions(Options{
+		Scope:      ScopeDoctor,
+		ProjectDir: "/tmp/demo",
+		Progress: func(msg string) {
+			progress = append(progress, msg)
+		},
+	})
+
+	want := []string{
+		"Checking xcodebuild",
+		"Checking plutil",
+		"Checking xcode-select",
+		"Checking xcrun",
+		"Checking xcodegen",
+		"Checking available iPhone simulators",
+		"Inspecting Xcode project",
+	}
+	if !strings.EqualFold(strings.Join(progress, "\n"), strings.Join(want, "\n")) {
+		t.Fatalf("progress messages = %v, want %v", progress, want)
+	}
+}

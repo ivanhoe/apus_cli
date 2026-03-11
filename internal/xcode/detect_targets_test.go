@@ -119,3 +119,44 @@ objects = {
 		t.Fatalf("listTargetsFromPBXProj() = %v, want %v", got, want)
 	}
 }
+
+func TestPickTarget_FallsBackToPBXProjWhenXcodebuildTimesOut(t *testing.T) {
+	tmp := t.TempDir()
+	projPath := filepath.Join(tmp, "Demo.xcodeproj")
+	if err := os.MkdirAll(projPath, 0o755); err != nil {
+		t.Fatalf("mkdir project: %v", err)
+	}
+
+	pbx := `// !$*UTF8*$!
+{
+objects = {
+		AAAAAAAAAAAAAAAAAAAAAAAA /* Demo */ = {
+			isa = PBXNativeTarget;
+		};
+		BBBBBBBBBBBBBBBBBBBBBBBB /* DemoWidgetExtension */ = {
+			isa = PBXNativeTarget;
+		};
+};
+}
+`
+	if err := os.WriteFile(filepath.Join(projPath, "project.pbxproj"), []byte(pbx), 0o644); err != nil {
+		t.Fatalf("write pbxproj: %v", err)
+	}
+
+	origRun := runXcodebuildListFn
+	t.Cleanup(func() {
+		runXcodebuildListFn = origRun
+	})
+
+	runXcodebuildListFn = func(string) ([]byte, string, error) {
+		return nil, "", errors.New("timed out after 10s")
+	}
+
+	got, err := pickTarget(projPath, "")
+	if err != nil {
+		t.Fatalf("pickTarget() error: %v", err)
+	}
+	if got != "Demo" {
+		t.Fatalf("pickTarget() = %q, want %q", got, "Demo")
+	}
+}

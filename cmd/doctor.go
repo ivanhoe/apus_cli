@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ivanhoe/apus_cli/internal/preflight"
+	"github.com/ivanhoe/apus_cli/internal/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -36,11 +37,22 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	var spinner *terminal.Spinner
+	progress := func(string) {}
+	if !doctorJSON {
+		spinner = terminal.NewSpinner("Checking xcodebuild")
+		progress = spinner.Update
+	}
+
 	report := preflight.RunWithOptions(preflight.Options{
 		Scope:      preflight.ScopeDoctor,
 		ProjectDir: projectDir,
 		Target:     doctorTarget,
+		Progress:   progress,
 	})
+	if spinner != nil {
+		spinner.Stop()
+	}
 
 	if doctorJSON {
 		reportErr := error(nil)

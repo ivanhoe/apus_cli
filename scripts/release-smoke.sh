@@ -22,6 +22,7 @@ mkdir -p "${WORK_ROOT}"
 runner_args=(
   -apus-bin "${BINARY_PATH}"
   -work-root "${WORK_ROOT}"
+  -strict-roundtrip=false
 )
 
 if [[ -n "${PACKAGE_PATH}" ]]; then

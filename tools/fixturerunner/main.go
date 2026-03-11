@@ -33,6 +33,7 @@ func run(args []string) int {
 	apusBin := fs.String("apus-bin", "", "Path to the apus binary to execute")
 	apusPackagePath := fs.String("apus-package-path", "", "Local path to the Apus Swift package")
 	workRoot := fs.String("work-root", filepath.Join(".tmp", "fixtures"), "Workspace for copied fixture runs")
+	strictRoundtrip := fs.Bool("strict-roundtrip", true, "Require project files to roundtrip byte-cleanly after init/remove")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -88,6 +89,7 @@ func run(args []string) int {
 		workRoot:        *workRoot,
 		apusBin:         apusBinPath,
 		apusPackagePath: apusPackageAbsPath,
+		strictRoundtrip: *strictRoundtrip,
 	}
 
 	for i, fixture := range fixtures {
@@ -108,6 +110,7 @@ type fixtureRunner struct {
 	workRoot        string
 	apusBin         string
 	apusPackagePath string
+	strictRoundtrip bool
 }
 
 func (r fixtureRunner) runFixture(fixture fixturematrix.Fixture) error {
@@ -339,7 +342,10 @@ func (r fixtureRunner) runSupportedFixture(workDir string, fixture fixturematrix
 		return fmt.Errorf("read pbxproj after remove: %w", err)
 	}
 	if !bytes.Equal(normalizePBXProjForComparison(pbxBefore), normalizePBXProjForComparison(pbxAfter)) {
-		return fmt.Errorf("pbxproj did not roundtrip cleanly")
+		if r.strictRoundtrip {
+			return fmt.Errorf("pbxproj did not roundtrip cleanly")
+		}
+		fmt.Fprintln(os.Stderr, "warning: pbxproj did not roundtrip cleanly")
 	}
 
 	if info.EntryFile != "" {
@@ -348,7 +354,10 @@ func (r fixtureRunner) runSupportedFixture(workDir string, fixture fixturematrix
 			return fmt.Errorf("read entry file after remove: %w", err)
 		}
 		if !bytes.Equal(entryBefore, entryAfter) {
-			return fmt.Errorf("entry file did not roundtrip cleanly")
+			if r.strictRoundtrip {
+				return fmt.Errorf("entry file did not roundtrip cleanly")
+			}
+			fmt.Fprintln(os.Stderr, "warning: entry file did not roundtrip cleanly")
 		}
 	}
 

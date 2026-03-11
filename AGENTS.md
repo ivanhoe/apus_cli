@@ -81,7 +81,7 @@ brew tap ivanhoe/apus
 brew install apus
 
 # curl installer
-curl -fsSL https://raw.githubusercontent.com/ivanhoe/apus_cli/main/scripts/install.sh | bash
+curl -fsSL https://getapus.dev/install.sh | bash
 
 # Release: tag triggers GitHub Actions matrix build
 git tag v0.x.0 && git push --tags

@@ -38,6 +38,7 @@ type Options struct {
 	Scope      Scope
 	ProjectDir string
 	Target     string
+	Progress   func(string)
 }
 
 type Check struct {
@@ -139,13 +140,25 @@ func RunWithOptions(opts Options) Report {
 		scope = ScopeDoctor
 	}
 
-	checks := []Check{
-		checkBinary("xcodebuild", "Install Xcode and command line tools."),
-		checkBinary("plutil", "Install Xcode and command line tools."),
-		checkXcodeSelect(),
+	progress := func(msg string) {
+		if opts.Progress != nil {
+			opts.Progress(msg)
+		}
 	}
 
+	progress("Checking xcodebuild")
+	checks := []Check{
+		checkBinary("xcodebuild", "Install Xcode and command line tools."),
+	}
+	progress("Checking plutil")
+	checks = append(checks,
+		checkBinary("plutil", "Install Xcode and command line tools."),
+	)
+	progress("Checking xcode-select")
+	checks = append(checks, checkXcodeSelect())
+
 	if scope == ScopeNew || scope == ScopeDoctor {
+		progress("Checking xcrun")
 		xcrunCheck := checkBinary("xcrun", "Install Xcode command line tools.")
 		checks = append(checks, xcrunCheck)
 
@@ -153,16 +166,19 @@ func RunWithOptions(opts Options) Report {
 		if scope == ScopeDoctor {
 			xcodegenStatus = CheckStatusWarn
 		}
+		progress("Checking xcodegen")
 		checks = append(checks,
 			checkBinaryWithStatus("xcodegen", "Install xcodegen manually: brew install xcodegen.", xcodegenStatus),
 		)
 		if xcrunCheck.Status == CheckStatusPass {
+			progress("Checking available iPhone simulators")
 			checks = append(checks, checkAvailableIPhoneSimulator())
 		}
 	}
 
 	var project *ProjectAssessment
 	if strings.TrimSpace(opts.ProjectDir) != "" {
+		progress("Inspecting Xcode project")
 		projectChecks, assessment := checkProject(opts.ProjectDir, opts.Target)
 		checks = append(checks, projectChecks...)
 		project = assessment

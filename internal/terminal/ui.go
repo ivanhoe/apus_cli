@@ -3,6 +3,7 @@ package terminal
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -24,9 +25,65 @@ type Step struct {
 	current int
 }
 
+// Spinner prints an unbounded spinner for long-running work that does not have
+// discrete numbered steps.
+type Spinner struct {
+	msg     string
+	mu      sync.RWMutex
+	stop    chan struct{}
+	stopped chan struct{}
+}
+
 // NewProgress creates a step tracker for n total steps.
 func NewProgress(total int) *Step {
 	return &Step{total: total}
+}
+
+// NewSpinner starts a spinner immediately with the given message.
+func NewSpinner(msg string) *Spinner {
+	s := &Spinner{
+		msg:     msg,
+		stop:    make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
+
+	go func() {
+		defer close(s.stopped)
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		for {
+			select {
+			case <-s.stop:
+				return
+			default:
+				s.mu.RLock()
+				msg := s.msg
+				s.mu.RUnlock()
+				fmt.Printf("\r%s %s", cyan.Sprint(frames[i%len(frames)]), msg)
+				time.Sleep(80 * time.Millisecond)
+				i++
+			}
+		}
+	}()
+
+	return s
+}
+
+// Update changes the message rendered by the spinner.
+func (s *Spinner) Update(msg string) {
+	s.mu.Lock()
+	s.msg = msg
+	s.mu.Unlock()
+}
+
+// Stop stops the spinner and leaves the last message in the terminal output.
+func (s *Spinner) Stop() {
+	close(s.stop)
+	<-s.stopped
+	s.mu.RLock()
+	msg := s.msg
+	s.mu.RUnlock()
+	fmt.Printf("\r%s %s\n", faint.Sprint("·"), msg)
 }
 
 // Start prints the "running" line for the current step and returns a done func.

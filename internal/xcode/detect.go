@@ -3,6 +3,7 @@ package xcode
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ProjectInfo contains the detected Xcode project details.
@@ -105,17 +107,13 @@ type xcodebuildList struct {
 	} `json:"project"`
 }
 
+const xcodebuildListTimeout = 10 * time.Second
+
+var runXcodebuildListFn = runXcodebuildList
+
 // pickTarget returns the primary app target (excludes *Tests, *UITests, *Extension*).
 func pickTarget(projPath string, preferredTarget string) (string, error) {
-	projectDir := filepath.Dir(projPath)
-	projectFile := filepath.Base(projPath)
-
-	cmd := exec.Command("xcodebuild", "-list", "-project", projectFile, "-json")
-	cmd.Dir = projectDir
-
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	out, stderr, err := runXcodebuildListFn(projPath)
 	if err == nil {
 		var list xcodebuildList
 		if parseErr := json.Unmarshal(out, &list); parseErr == nil {
@@ -130,11 +128,30 @@ func pickTarget(projPath string, preferredTarget string) (string, error) {
 		return chooseAppTarget(pbxTargets, projPath, preferredTarget)
 	}
 
-	xcodeErr := formatXcodebuildListError(err, stderr.String())
+	xcodeErr := formatXcodebuildListError(err, stderr)
 	if xcodeErr == "" {
 		xcodeErr = "xcodebuild -list failed for unknown reason"
 	}
 	return "", fmt.Errorf("%s\npbxproj fallback failed: %v", xcodeErr, pbxErr)
+}
+
+func runXcodebuildList(projPath string) ([]byte, string, error) {
+	projectDir := filepath.Dir(projPath)
+	projectFile := filepath.Base(projPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), xcodebuildListTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "xcodebuild", "-list", "-project", projectFile, "-json")
+	cmd.Dir = projectDir
+
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if ctx.Err() == context.DeadlineExceeded {
+		return out, stderr.String(), fmt.Errorf("timed out after %s", xcodebuildListTimeout)
+	}
+	return out, stderr.String(), err
 }
 
 func chooseAppTarget(targets []string, projPath string, preferredTarget string) (string, error) {

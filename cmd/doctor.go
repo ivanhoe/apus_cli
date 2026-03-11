@@ -2,15 +2,22 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/ivanhoe/apus_cli/internal/preflight"
 	"github.com/ivanhoe/apus_cli/internal/terminal"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
 var doctorPath string
 var doctorJSON bool
 var doctorTarget string
+
+var isTerminalFdFn = func(fd uintptr) bool {
+	return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
+}
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
@@ -37,9 +44,10 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
+	out := cmd.OutOrStdout()
 	var spinner *terminal.Spinner
 	progress := func(string) {}
-	if !doctorJSON {
+	if !doctorJSON && shouldRenderSpinner(out) {
 		spinner = terminal.NewSpinner("Checking xcodebuild")
 		progress = spinner.Update
 	}
@@ -68,7 +76,6 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 		}, reportErr)
 	}
 
-	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
 
 	fmt.Fprintf(out, "Doctor report: %s\n", report.Classification)
@@ -120,6 +127,14 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 
 	fmt.Fprintln(out, "Environment looks good.")
 	return nil
+}
+
+func shouldRenderSpinner(out io.Writer) bool {
+	file, ok := out.(*os.File)
+	if !ok {
+		return false
+	}
+	return isTerminalFdFn(file.Fd())
 }
 
 func errorString(err error) string {

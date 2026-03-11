@@ -33,7 +33,7 @@ If your repo has multiple app targets, plan to pass `--target`.
 
 ```bash
 # Installer script
-curl -fsSL https://raw.githubusercontent.com/ivanhoe/apus_cli/main/scripts/install.sh | bash
+curl -fsSL https://getapus.dev/install.sh | bash
 
 # Or build/install from source
 go install github.com/ivanhoe/apus_cli@latest

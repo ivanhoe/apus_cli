@@ -9,10 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ivanhoe/apus_cli/internal/pbxproj"
 )
 
 // ProjectInfo contains the detected Xcode project details.
@@ -210,41 +211,32 @@ func formatXcodebuildListError(execErr error, stderr string) string {
 }
 
 func listTargetsFromPBXProj(projPath string) ([]string, error) {
-	pbxPath, err := pbxprojPath(projPath)
+	root, _, err := readAndParsePBXProj(projPath)
 	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(pbxPath)
-	if err != nil {
-		return nil, fmt.Errorf("read pbxproj: %w", err)
+
+	objects := root.GetDict("objects")
+	if objects == nil {
+		return nil, fmt.Errorf("no objects dict in pbxproj")
 	}
 
-	// Example:
-	// AAAAAA /* MyApp */ = {
-	//     isa = PBXNativeTarget;
-	re := regexp.MustCompile(`(?s)[0-9A-F]{24} /\* ([^*]+) \*/ = \{\s*isa = PBXNativeTarget;`)
-	matches := re.FindAllStringSubmatch(string(raw), -1)
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no PBXNativeTarget entries found in %s", pbxPath)
+	all := pbxproj.ListNativeTargetNames(objects)
+	if len(all) == 0 {
+		return nil, fmt.Errorf("no PBXNativeTarget entries found in pbxproj")
 	}
 
-	seen := make(map[string]struct{}, len(matches))
-	targets := make([]string, 0, len(matches))
-	for _, m := range matches {
-		name := strings.TrimSpace(m[1])
-		if name == "" {
+	// Deduplicate while preserving order
+	seen := make(map[string]struct{}, len(all))
+	names := make([]string, 0, len(all))
+	for _, n := range all {
+		if _, ok := seen[n]; ok {
 			continue
 		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		targets = append(targets, name)
+		seen[n] = struct{}{}
+		names = append(names, n)
 	}
-	if len(targets) == 0 {
-		return nil, fmt.Errorf("no target names parsed from PBXNativeTarget entries in %s", pbxPath)
-	}
-	return targets, nil
+	return names, nil
 }
 
 type entryPointCandidate struct {

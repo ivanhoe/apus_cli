@@ -16,7 +16,14 @@ func TestBuildInitPlan_RemoteDependency(t *testing.T) {
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(projectDir, "project.pbxproj"), []byte("// empty pbxproj"), 0o644); err != nil {
+	emptyPBX := `// !$*UTF8*$!
+{
+	objects = {
+	};
+	rootObject = AAAA;
+}
+`
+	if err := os.WriteFile(filepath.Join(projectDir, "project.pbxproj"), []byte(emptyPBX), 0o644); err != nil {
 		t.Fatalf("write pbxproj: %v", err)
 	}
 
@@ -62,10 +69,21 @@ func TestBuildInitPlan_AlreadyIntegratedLocalDependency(t *testing.T) {
 	if err := os.MkdirAll(projectDir, 0o755); err != nil {
 		t.Fatalf("mkdir project: %v", err)
 	}
-	localPBX := `1234567890ABCDEF12345678 /* XCLocalSwiftPackageReference "../apus" */ = {
-		isa = XCLocalSwiftPackageReference;
-		relativePath = ../apus;
-	};`
+	localPBX := `// !$*UTF8*$!
+{
+	objects = {
+
+/* Begin XCLocalSwiftPackageReference section */
+		1234567890ABCDEF12345678 /* XCLocalSwiftPackageReference "../apus" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../apus;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+	};
+	rootObject = AAAA;
+}
+`
 	if err := os.WriteFile(filepath.Join(projectDir, "project.pbxproj"), []byte(localPBX), 0o644); err != nil {
 		t.Fatalf("write pbxproj: %v", err)
 	}

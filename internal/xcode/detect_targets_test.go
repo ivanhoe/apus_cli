@@ -96,12 +96,15 @@ func TestListTargetsFromPBXProj(t *testing.T) {
 objects = {
 		AAAAAAAAAAAAAAAAAAAAAAAA /* Demo */ = {
 			isa = PBXNativeTarget;
+			name = Demo;
 		};
 		BBBBBBBBBBBBBBBBBBBBBBBB /* DemoTests */ = {
 			isa = PBXNativeTarget;
+			name = DemoTests;
 		};
 		CCCCCCCCCCCCCCCCCCCCCCCC /* Demo */ = {
 			isa = PBXNativeTarget;
+			name = Demo;
 		};
 };
 }
@@ -132,9 +135,11 @@ func TestPickTarget_FallsBackToPBXProjWhenXcodebuildTimesOut(t *testing.T) {
 objects = {
 		AAAAAAAAAAAAAAAAAAAAAAAA /* Demo */ = {
 			isa = PBXNativeTarget;
+			name = Demo;
 		};
 		BBBBBBBBBBBBBBBBBBBBBBBB /* DemoWidgetExtension */ = {
 			isa = PBXNativeTarget;
+			name = DemoWidgetExtension;
 		};
 };
 }

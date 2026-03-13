@@ -150,7 +150,7 @@ func runInit(_ *cobra.Command, _ []string) error {
 				terminal.Info("Rollback failed: " + rollbackErr.Error())
 				return markPrinted(rollbackError(fmt.Errorf("pbxproj modification failed: %w", err)))
 			}
-			return markPrinted(mutationError(fmt.Errorf("pbxproj modification failed; backed-up files restored: %w", err)))
+			return markPrinted(mutationError(fmt.Errorf("pbxproj modification failed; backed-up files restored (resolved packages may remain): %w", err)))
 		}
 		pbxAfter := readFileSize(filepath.Join(info.ProjectPath, "project.pbxproj"))
 		if pbxAfter != pbxBefore {
